@@ -6,7 +6,7 @@ This file is for contributors changing this repo. For agents *calling* the libra
 
 ## Project overview
 
-TypeScript ESM library (Node ≥20, MIT) that **parses, converts, surgically edits, and writes** office documents for AI agents and Node apps.
+TypeScript ESM library (Node ≥22.13, MIT) that **parses, converts, surgically edits, and writes** office documents for AI agents and Node apps.
 
 All parse/convert/edit/write code under `src/` is first-party. Public facade: `parseDocument` · `convertDocument` · `editDocument` · `writeDocument` (+ `DocumentError`, `convertDocToDocx`).
 
