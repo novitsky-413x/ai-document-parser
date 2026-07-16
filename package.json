@@ -1,0 +1,88 @@
+{
+    "name": "ai-document-parser",
+    "version": "0.1.101",
+    "description": "Parse, convert, surgically edit, and write office documents for AI agents and Node apps — permissive deps only",
+    "license": "MIT",
+    "type": "module",
+    "engines": {
+        "node": ">=20"
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./parse": {
+            "types": "./dist/parse/index.d.ts",
+            "import": "./dist/parse/index.js"
+        },
+        "./convert": {
+            "types": "./dist/convert/index.d.ts",
+            "import": "./dist/convert/index.js"
+        },
+        "./edit": {
+            "types": "./dist/edit/index.d.ts",
+            "import": "./dist/edit/index.js"
+        },
+        "./write": {
+            "types": "./dist/write/index.d.ts",
+            "import": "./dist/write/index.js"
+        },
+        "./package.json": "./package.json"
+    },
+    "bin": {
+        "ai-document-parser": "./dist/cli.js"
+    },
+    "files": [
+        "dist",
+        "fonts",
+        "LICENSE",
+        "LICENSES.md",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+        "test": "npm run build && node --test --import tsx test/integration/roundtrip.test.ts",
+        "test:watch": "node --test --watch --import tsx test/integration/roundtrip.test.ts",
+        "test:smoke": "node scripts/smoke-scratch.mjs",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "check-licenses": "node scripts/check-licenses.mjs",
+        "prepublishOnly": "npm run check-licenses && npm test"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/novitsky-413x/ai-document-parser.git"
+    },
+    "keywords": [
+        "document",
+        "parser",
+        "docx",
+        "xlsx",
+        "pdf",
+        "office",
+        "ai",
+        "agent",
+        "edit",
+        "convert"
+    ],
+    "author": "Alexander Novitsky",
+    "dependencies": {
+        "@e965/xlsx": "^0.20.3",
+        "cfb": "^1.2.2",
+        "docx": "^9.7.0",
+        "jspdf": "^4.2.0",
+        "jszip": "^3.10.1",
+        "pdfjs-dist": "6.1.200"
+    },
+    "devDependencies": {
+        "@types/node": "^22.15.0",
+        "tsx": "^4.23.1",
+        "typescript": "^5.8.3"
+    },
+    "allowScripts": {
+        "esbuild": true,
+        "core-js": false
+    }
+}

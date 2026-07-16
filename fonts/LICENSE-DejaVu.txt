@@ -1,0 +1,2 @@
+DejaVu Sans (DejaVuSans.ttf) — fonts from the DejaVu project.
+See https://dejavu-fonts.github.io/ for license terms (Bitstream Vera / Arev Fonts / Public Domain).

@@ -1,0 +1,14 @@
+# Ignore patterns
+node_modules/
+dist/
+coverage/
+scratch/
+*.log
+.env
+.env.*
+.DS_Store
+test/tmp/
+test/**/*.js
+test/**/*.d.ts
+test/**/*.map
+*.tgz
