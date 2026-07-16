@@ -1,8 +1,22 @@
 import { csvEscapeCell, escapeHtml } from '../utils/text.js';
-import type { SpreadsheetStructured } from '../types.js';
+import type { ContentBlock, SpreadsheetStructured } from '../types.js';
 import { spreadsheetToText } from '../edit/spreadsheet.js';
+import {
+  blocksFromSpreadsheet,
+  emitHtmlFromBlocks,
+  emitMarkdownFromBlocks,
+  emitMarkdownTable,
+} from './blocks.js';
 
 export { csvEscapeCell, escapeHtml } from '../utils/text.js';
+export {
+  emitMarkdownFromBlocks,
+  emitHtmlFromBlocks,
+  emitMarkdownTable,
+  blocksFromSpreadsheet,
+  blocksFromCsvRows,
+  flattenBlocksToParagraphs,
+} from './blocks.js';
 
 /** Emit markdown / html / text / csv from already-extracted content. */
 export function emitText(text: string): string {
@@ -49,44 +63,41 @@ export function emitCsvFromSheet(
 }
 
 export function emitMarkdownFromSpreadsheet(structured: SpreadsheetStructured): string {
-  const parts: string[] = [];
-  for (const [name, rows] of Object.entries(structured.sheets)) {
-    parts.push(`## ${name}`);
-    if (!rows.length) continue;
-    const header = rows[0].map((c) => String(c ?? ''));
-    const sep = header.map(() => '---');
-    parts.push(`| ${header.join(' | ')} |`);
-    parts.push(`| ${sep.join(' | ')} |`);
-    for (const row of rows.slice(1)) {
-      parts.push(`| ${row.map((c) => String(c ?? '')).join(' | ')} |`);
-    }
-    parts.push('');
-  }
-  return parts.join('\n').trim();
+  return emitMarkdownFromBlocks(blocksFromSpreadsheet(structured.sheets));
 }
 
 export function emitMarkdownFromPptx(slides: string[][]): string {
-  return slides
-    .map((texts, i) => {
-      const body = texts.map((t) => t.trim()).filter(Boolean).join('\n\n');
-      return body ? `## Slide ${i + 1}\n\n${body}` : `## Slide ${i + 1}`;
-    })
-    .join('\n\n')
-    .trim();
+  const blocks: ContentBlock[] = [];
+  slides.forEach((texts, i) => {
+    blocks.push({
+      type: 'heading',
+      level: 2,
+      runs: [{ text: `Slide ${i + 1}` }],
+    });
+    texts.forEach((t, j) => {
+      if (j === 0) {
+        blocks.push({ type: 'heading', level: 3, runs: [{ text: t }] });
+      } else {
+        blocks.push({ type: 'paragraph', runs: [{ text: t }] });
+      }
+    });
+  });
+  return emitMarkdownFromBlocks(blocks);
 }
 
 export function emitHtmlFromPptx(slides: string[][]): string {
-  const sections = slides
-    .map((texts, i) => {
-      const paras = texts
-        .map((t) => t.trim())
-        .filter(Boolean)
-        .map((t) => `<p>${escapeHtml(t)}</p>`)
-        .join('\n');
-      return `<section>\n<h2>Slide ${i + 1}</h2>\n${paras || '<p></p>'}\n</section>`;
-    })
-    .join('\n');
-  return `<!DOCTYPE html>\n<html><body>\n${sections}\n</body></html>\n`;
+  const blocks: ContentBlock[] = [];
+  slides.forEach((texts, i) => {
+    blocks.push({
+      type: 'heading',
+      level: 2,
+      runs: [{ text: `Slide ${i + 1}` }],
+    });
+    for (const t of texts) {
+      blocks.push({ type: 'paragraph', runs: [{ text: t }] });
+    }
+  });
+  return emitHtmlFromBlocks(blocks);
 }
 
 export function emitTextFromSpreadsheet(structured: SpreadsheetStructured): string {

@@ -22,12 +22,14 @@ Returns `DocumentResult` with `format`, `text`, `charCount`, optional `structure
 
 **Structured contracts (for edit / agent tools):**
 
-- DOCX: `{ format: 'docx', paragraphs: string[] }`
+- DOCX: `{ format: 'docx', paragraphs: string[], blocks: ContentBlock[] }` — use `paragraphs` for edit; `blocks` for rich convert
 - Spreadsheet: `{ format: 'xlsx'|'xls', sheets: { [name]: cell[][] } }`
-- PPTX: `{ format: 'pptx', slides: string[][] }` — text blocks per slide (DrawingML)
+- PPTX: `{ format: 'pptx', slides: string[][], blocks: ContentBlock[] }`
 - Legacy DOC: `{ format: 'doc', paragraphs: string[], source: 'ai-document-parser-doc-binary' }`
-- MD/HTML: `{ format, paragraphs: string[] }`
+- MD/HTML: `{ format, paragraphs: string[], blocks?: ContentBlock[], raw?: string }` (md keeps `raw` for passthrough)
 - CSV: `{ format: 'csv', rows: string[][] }`
+
+`ContentBlock` covers headings, paragraphs (with bold/italic runs), list items, GFM tables, thematic breaks, and code fences.
 
 ZIP packages without a reliable extension are refined via package parts / `[Content_Types].xml` (docx vs xlsx vs pptx).
 
@@ -39,12 +41,22 @@ One-step parse + generate. Always parses with `output: 'structured'` internally,
 type ConvertOptions = {
   /** Reserved; currently ignored. */
   ocr?: boolean;
-  /** Reserved; currently ignored. */
   extractAttachments?: boolean;
-  /** Reserved; currently ignored. */
   generator?: Record<string, unknown>;
 };
 ```
+
+For **md/html**, rich sources emit from `blocks` (structure preserved):
+
+| Source | md/html quality |
+|--------|-----------------|
+| docx | headings, **bold**/*italic*/~~strike~~, ordered/bullet lists, **tables**, `[links](url)`, GFM footnotes; images omitted |
+| xlsx / xls | sheet headings + GFM tables |
+| pptx | `## Slide N`, title as `###`, tables when present |
+| html | h1–h6, lists, tables, emphasis |
+| csv | GFM table |
+| md → md | **passthrough** of original file text |
+| pdf / legacy doc | plain text only (no reliable structure) |
 
 Supported `to`: `'md' | 'html' | 'csv' | 'text' | 'chunks'`
 
@@ -52,8 +64,8 @@ Supported `to`: `'md' | 'html' | 'csv' | 'text' | 'chunks'`
 |--------|----------------|
 | docx / doc | md, html, text, chunks — **not** csv |
 | xlsx / xls | csv, md, html, text, chunks |
-| pptx | md (`## Slide N`), html, text, chunks — **not** csv |
-| pdf | md, html, text, chunks |
+| pptx | md, html, text, chunks — **not** csv |
+| pdf | md, html, text, chunks (plain) |
 | md / html / csv | md, html, text, csv, chunks |
 
 Not supported as convert **targets**: `'rtf' | 'epub' | 'pdf'` (for PDF creation use `writeDocument`).
@@ -116,6 +128,8 @@ import type {
   SpreadsheetStructured,
   PptxStructured,
   LegacyDocStructured,
+  ContentBlock,
+  InlineRun,
   DocumentResult,
   ConvertResult,
 } from 'ai-document-parser';

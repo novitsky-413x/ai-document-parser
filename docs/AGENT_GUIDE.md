@@ -44,11 +44,13 @@ Use `convertDocument` when you need a single artifact for RAG or downstream tool
 
 | Goal | Call |
 |------|------|
-| Markdown for LLM context | `convertDocument(path, 'md')` |
-| Embedding chunks | `convertDocument(path, 'chunks')` or `parseDocument(..., { output: 'chunks' })` |
-| Spreadsheet dump | `convertDocument(xlsxPath, 'csv')` |
+| Markdown for LLM context | `convertDocument(path, 'md')` — DOCX keeps headings/tables/emphasis/lists/links/footnotes (images omitted) |
 
-Do **not** convert DOCX/PPTX to `csv`. Unsupported convert targets: `pdf`, `rtf`, `epub`.
+| Embedding chunks | `convertDocument(path, 'chunks')` or `parseDocument(..., { output: 'chunks' })` |
+| Spreadsheet dump | `convertDocument(xlsxPath, 'csv')` or `'md'` for GFM tables |
+
+Do **not** convert DOCX/PPTX to `csv`. Unsupported convert targets: `pdf`, `rtf`, `epub`.  
+PDF / legacy `.doc` → md is plain text only (no reliable document structure).
 
 ## When to use AST / chunks
 

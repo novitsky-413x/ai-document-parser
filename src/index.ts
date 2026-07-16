@@ -30,6 +30,8 @@ export type {
   SpreadsheetStructured,
   LegacyDocStructured,
   PptxStructured,
+  ContentBlock,
+  InlineRun,
   EditDocumentOp,
   EditResult,
   WriteDocumentInput,

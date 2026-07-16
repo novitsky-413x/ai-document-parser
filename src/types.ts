@@ -60,7 +60,10 @@ export interface DocumentResult {
 
 export interface DocxStructured {
   format: 'docx';
+  /** Flat plain-text paragraphs for surgical edit (replace). */
   paragraphs: string[];
+  /** Structural blocks for convert → md/html. */
+  blocks: ContentBlock[];
 }
 
 export interface SpreadsheetStructured {
@@ -78,7 +81,28 @@ export interface PptxStructured {
   format: 'pptx';
   /** Per-slide text blocks (DrawingML a:t runs grouped by a:p). */
   slides: string[][];
+  /** Flat structural blocks for convert → md/html. */
+  blocks: ContentBlock[];
 }
+
+/** Inline text run with optional emphasis / link. */
+export type InlineRun = {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  /** When set, emit as markdown/HTML link. */
+  href?: string;
+  strike?: boolean;
+};
+
+/** Shared structural model for convert → md/html. */
+export type ContentBlock =
+  | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; runs: InlineRun[] }
+  | { type: 'paragraph'; runs: InlineRun[] }
+  | { type: 'list_item'; level: number; ordered?: boolean; runs: InlineRun[] }
+  | { type: 'table'; rows: string[][] }
+  | { type: 'thematic_break' }
+  | { type: 'code'; text: string; language?: string };
 
 export interface ConvertResult {
   value: string | Uint8Array | unknown;

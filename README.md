@@ -21,8 +21,8 @@ import { parseDocument, convertDocument, editDocument, writeDocument } from 'ai-
 const result = await parseDocument('report.docx', { output: 'text' });
 // output: 'text' | 'structured' | 'ast' | 'chunks'
 
-// Convert (parse + emit in one step)
-const { value } = await convertDocument('data.xlsx', 'md');
+// Convert preserves structure where possible (headings, tables, emphasis)
+const { value } = await convertDocument('report.docx', 'md');
 const slides = await convertDocument('deck.pptx', 'md'); // ## Slide N …
 
 // Surgical edit
@@ -76,6 +76,7 @@ See [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
 
 Notes:
 
+- Convert → **md/html** preserves structure for DOCX (headings, tables, bold/italic/strike, ordered lists, hyperlinks, footnotes; images omitted), HTML, CSV (GFM table), PPTX slides, XLSX sheets. MD→md is passthrough. PDF / legacy `.doc` stay plain text.
 - Convert targets `rtf` / `epub` / `pdf` are **not** supported (create PDF with `writeDocument`).
 - **DOCX** and **PPTX** cannot convert **to csv** (use a spreadsheet source).
 

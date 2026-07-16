@@ -21,8 +21,8 @@ All parse/convert/edit/write code under `src/` is first-party. Public facade: `p
 
 ```
 src/
-  parse/          parseDocument router, detect, formats, pdf, pptx, text-formats, legacy-doc
-  convert/        convertDocument + emit helpers
+  parse/          parseDocument router, detect, formats, pdf, pptx, docx-blocks, html-blocks, text-formats, legacy-doc
+  convert/        convertDocument + blocks emit helpers
   edit/           surgical DOCX OOXML + spreadsheet patch
   write/          create docx / xlsx / plain pdf
   utils/          DocumentError, path helpers, text escape helpers

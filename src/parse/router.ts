@@ -37,6 +37,8 @@ import {
   parseMarkdown,
   readTextFile,
 } from './text-formats.js';
+import { htmlToStructured, markdownToBlocks } from './html-blocks.js';
+import { flattenBlocksToParagraphs } from '../convert/blocks.js';
 import { chunkText } from '../convert/emit.js';
 
 function toBuffer(input: DocumentInput): Buffer | null {
@@ -201,8 +203,18 @@ export async function parseDocument(
               : '';
       if (format === 'md') {
         const parsed = parseMarkdown(raw);
+        const blocks = markdownToBlocks(parsed.text);
+        const paragraphs =
+          flattenBlocksToParagraphs(blocks).length > 0
+            ? flattenBlocksToParagraphs(blocks)
+            : parsed.paragraphs;
         if (output === 'structured') {
-          const structured = { format: 'md' as const, paragraphs: parsed.paragraphs };
+          const structured = {
+            format: 'md' as const,
+            paragraphs,
+            blocks,
+            raw: parsed.text,
+          };
           const payload = JSON.stringify(structured, null, 2);
           return {
             format: 'md',
@@ -213,13 +225,20 @@ export async function parseDocument(
           };
         }
         return finish('md', parsed.text, filePath, output, {
-          paragraphs: parsed.paragraphs,
+          paragraphs,
+          blocks,
+          raw: parsed.text,
         });
       }
       if (format === 'html') {
-        const parsed = parseHtml(raw);
+        const rich = htmlToStructured(raw);
+        const plain = parseHtml(raw);
         if (output === 'structured') {
-          const structured = { format: 'html' as const, paragraphs: parsed.paragraphs };
+          const structured = {
+            format: 'html' as const,
+            paragraphs: rich.paragraphs.length ? rich.paragraphs : plain.paragraphs,
+            blocks: rich.blocks,
+          };
           const payload = JSON.stringify(structured, null, 2);
           return {
             format: 'html',
@@ -229,8 +248,9 @@ export async function parseDocument(
             structured,
           };
         }
-        return finish('html', parsed.text, filePath, output, {
-          paragraphs: parsed.paragraphs,
+        return finish('html', plain.text, filePath, output, {
+          paragraphs: rich.paragraphs.length ? rich.paragraphs : plain.paragraphs,
+          blocks: rich.blocks,
         });
       }
       const parsed = parseCsv(raw);

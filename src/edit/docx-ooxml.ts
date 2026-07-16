@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import JSZip from 'jszip';
 import { DocumentError } from '../utils/errors.js';
 import type { DocxStructured } from '../types.js';
+import { docxStructuredFromZip } from '../parse/docx-blocks.js';
 
 const DOC_PARTS: Array<string | RegExp> = [
   'word/document.xml',
@@ -16,32 +17,6 @@ export function escapeXml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
-}
-
-function decodeXmlEntities(s: string): string {
-  return s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&');
-}
-
-function paragraphTextsFromXml(xml: string): string[] {
-  const paragraphs: string[] = [];
-  const paraRegex = /<w:p[\s\S]*?<\/w:p>/g;
-  let pm: RegExpExecArray | null;
-  while ((pm = paraRegex.exec(xml)) !== null) {
-    const wtRegex = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
-    const parts: string[] = [];
-    let tm: RegExpExecArray | null;
-    while ((tm = wtRegex.exec(pm[0])) !== null) {
-      parts.push(decodeXmlEntities(tm[1]));
-    }
-    const text = parts.join('').trim();
-    if (text) paragraphs.push(text);
-  }
-  return paragraphs;
 }
 
 function isDocPart(name: string): boolean {
@@ -225,23 +200,18 @@ export async function readDocxStructured(
   filePath: string
 ): Promise<DocxStructured> {
   const zip = await loadZip(filePath);
-  const docFile = zip.file('word/document.xml');
-  if (!docFile) {
+  if (!zip.file('word/document.xml')) {
     throw new DocumentError('PARSE_FAILED', 'Invalid docx: missing word/document.xml');
   }
-
-  const xml = await docFile.async('string');
-  return { format: 'docx', paragraphs: paragraphTextsFromXml(xml) };
+  return docxStructuredFromZip(zip);
 }
 
 export async function readDocxStructuredFromBuffer(
   buf: Buffer
 ): Promise<DocxStructured> {
   const zip = await JSZip.loadAsync(buf);
-  const docFile = zip.file('word/document.xml');
-  if (!docFile) {
+  if (!zip.file('word/document.xml')) {
     throw new DocumentError('PARSE_FAILED', 'Invalid docx: missing word/document.xml');
   }
-  const xml = await docFile.async('string');
-  return { format: 'docx', paragraphs: paragraphTextsFromXml(xml) };
+  return docxStructuredFromZip(zip);
 }

@@ -468,3 +468,300 @@ describe('convertDocument matrix', () => {
     }
   });
 });
+
+describe('structural convert → md', () => {
+  let dir: string;
+
+  before(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'adp-struct-'));
+  });
+
+  after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('docx preserves headings, bold, table, and list', async () => {
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle } =
+      await import('docx');
+    const border = { style: BorderStyle.SINGLE, size: 1, color: '000000' };
+    const borders = { top: border, bottom: border, left: border, right: border };
+    const doc = new Document({
+      sections: [
+        {
+          children: [
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              children: [new TextRun('Report Title')],
+            }),
+            new Paragraph({
+              children: [
+                new TextRun('Hello '),
+                new TextRun({ text: 'bold', bold: true }),
+                new TextRun(' world'),
+              ],
+            }),
+            new Paragraph({
+              bullet: { level: 0 },
+              children: [new TextRun('Bullet one')],
+            }),
+            new Table({
+              width: { size: 5000, type: WidthType.DXA },
+              rows: [
+                new TableRow({
+                  children: ['A', 'B'].map(
+                    (t) =>
+                      new TableCell({
+                        borders,
+                        width: { size: 2500, type: WidthType.DXA },
+                        children: [new Paragraph({ children: [new TextRun(t)] })],
+                      })
+                  ),
+                }),
+                new TableRow({
+                  children: ['1', '2'].map(
+                    (t) =>
+                      new TableCell({
+                        borders,
+                        width: { size: 2500, type: WidthType.DXA },
+                        children: [new Paragraph({ children: [new TextRun(t)] })],
+                      })
+                  ),
+                }),
+              ],
+            }),
+          ],
+        },
+      ],
+    });
+    const file = path.join(dir, 'rich.docx');
+    writeFileSync(file, await Packer.toBuffer(doc));
+
+    const md = await convertDocument(file, 'md');
+    const value = String(md.value);
+    assert.match(value, /^# Report Title/m);
+    assert.match(value, /\*\*bold\*\*/);
+    assert.match(value, /\|\s*A\s*\|\s*B\s*\|/);
+    assert.match(value, /\|\s*1\s*\|\s*2\s*\|/);
+    assert.match(value, /^-\s+Bullet one/m);
+
+    const structured = await parseDocument(file, { output: 'structured' });
+    const s = structured.structured as { blocks: unknown[]; paragraphs: string[] };
+    assert.ok(Array.isArray(s.blocks) && s.blocks.length >= 3);
+    assert.ok(s.paragraphs.some((p) => p.includes('Report Title')));
+
+    await editDocument(file, {
+      type: 'docx',
+      op: 'replace',
+      oldString: 'Report Title',
+      newString: 'Updated Title',
+    });
+    const again = await parseDocument(file, { output: 'structured' });
+    assert.ok(
+      (again.structured as { paragraphs: string[] }).paragraphs.some((p) =>
+        p.includes('Updated Title')
+      )
+    );
+  });
+
+  it('html preserves h2, table, and list in md', async () => {
+    const file = path.join(dir, 'struct.html');
+    writeFileSync(
+      file,
+      `<html><body>
+        <h2>Section</h2>
+        <ul><li>Item A</li><li>Item B</li></ul>
+        <table><tr><th>X</th><th>Y</th></tr><tr><td>3</td><td>4</td></tr></table>
+      </body></html>`,
+      'utf8'
+    );
+    const md = String((await convertDocument(file, 'md')).value);
+    assert.match(md, /^## Section/m);
+    assert.match(md, /^-\s+Item A/m);
+    assert.match(md, /\|\s*X\s*\|\s*Y\s*\|/);
+  });
+
+  it('csv converts to GFM table', async () => {
+    const file = path.join(dir, 'struct.csv');
+    writeFileSync(file, 'col1,col2\nx,y\n', 'utf8');
+    const md = String((await convertDocument(file, 'md')).value);
+    assert.match(md, /\|\s*col1\s*\|\s*col2\s*\|/);
+    assert.match(md, /\|\s*---/);
+    assert.match(md, /\|\s*x\s*\|\s*y\s*\|/);
+  });
+
+  it('md to md is passthrough', async () => {
+    const file = path.join(dir, 'keep.md');
+    const src = '# Keep\n\n- a\n- b\n\n| c | d |\n| --- | --- |\n| 1 | 2 |\n';
+    writeFileSync(file, src, 'utf8');
+    const md = String((await convertDocument(file, 'md')).value);
+    assert.match(md, /# Keep/);
+    assert.match(md, /- a/);
+    assert.match(md, /\| c \|/);
+  });
+
+  it('pptx emits slide headings in md', async () => {
+    const file = path.join(dir, 'struct.pptx');
+    await writeMinimalPptx(file, [['Title One'], ['Body two']]);
+    const md = String((await convertDocument(file, 'md')).value);
+    assert.match(md, /## Slide 1/);
+    assert.match(md, /Title One/);
+    assert.match(md, /## Slide 2/);
+  });
+
+  it('docx fidelity: escape, styles, lists, links, notes, dropcap, nested table', async () => {
+    const { parseDocxBlocksFromPackage } = await import('../../src/parse/docx-blocks.js');
+    const { emitMarkdownFromBlocks } = await import('../../src/convert/blocks.js');
+
+    const stylesXml = `<?xml version="1.0"?>
+      <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:style w:type="character" w:styleId="Strong"><w:rPr><w:b/></w:rPr></w:style>
+        <w:style w:type="character" w:styleId="Emphasis"><w:rPr><w:i/></w:rPr></w:style>
+      </w:styles>`;
+
+    const numberingXml = `<?xml version="1.0"?>
+      <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:abstractNum w:abstractNumId="0">
+          <w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl>
+        </w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+      </w:numbering>`;
+
+    const relsXml = `<?xml version="1.0"?>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rId9" Target="http://example.com/download" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"/>
+      </Relationships>`;
+
+    const footnotesXml = `<?xml version="1.0"?>
+      <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:footnote w:type="separator" w:id="-1"/>
+        <w:footnote w:id="1"><w:p><w:r><w:t>A footnote body.</w:t></w:r></w:p></w:footnote>
+      </w:footnotes>`;
+
+    const documentXml = `<?xml version="1.0"?>
+      <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <w:body>
+          <w:p><w:r><w:t>Word (2007) and newer.</w:t></w:r></w:p>
+          <w:p>
+            <w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>bold</w:t></w:r>
+            <w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>-italic</w:t></w:r>
+          </w:p>
+          <w:p>
+            <w:r><w:rPr><w:rStyle w:val="Strong"/></w:rPr><w:t>StrongText</w:t></w:r>
+            <w:r><w:t> </w:t></w:r>
+            <w:r><w:rPr><w:rStyle w:val="Emphasis"/></w:rPr><w:t>EmphText</w:t></w:r>
+          </w:p>
+          <w:p>
+            <w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+            <w:r><w:t>First numbered</w:t></w:r>
+          </w:p>
+          <w:p>
+            <w:r><w:t>See </w:t></w:r>
+            <w:hyperlink r:id="rId9"><w:r><w:t>download page</w:t></w:r></w:hyperlink>
+            <w:r><w:t>.</w:t></w:r>
+            <w:r><w:footnoteReference w:id="1"/></w:r>
+          </w:p>
+          <w:p>
+            <w:pPr><w:framePr w:dropCap="drop" w:lines="3"/></w:pPr>
+            <w:r><w:t>D</w:t></w:r>
+          </w:p>
+          <w:p><w:r><w:t>rop caps continue here.</w:t></w:r></w:p>
+          <w:tbl>
+            <w:tr>
+              <w:tc>
+                <w:p><w:r><w:t>Outer</w:t></w:r></w:p>
+                <w:tbl>
+                  <w:tr>
+                    <w:tc><w:p><w:r><w:t>One</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Two</w:t></w:r></w:p></w:tc>
+                  </w:tr>
+                  <w:tr>
+                    <w:tc><w:p><w:r><w:t>Three</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Four</w:t></w:r></w:p></w:tc>
+                  </w:tr>
+                </w:tbl>
+              </w:tc>
+              <w:tc><w:p><w:r><w:t>Right</w:t></w:r></w:p></w:tc>
+            </w:tr>
+          </w:tbl>
+          <w:p>
+            <w:pPr><w:pStyle w:val="TOC1"/></w:pPr>
+            <w:r><w:t>Chapter One</w:t></w:r>
+            <w:r><w:tab/></w:r>
+            <w:r><w:t>5</w:t></w:r>
+          </w:p>
+        </w:body>
+      </w:document>`;
+
+    const blocks = parseDocxBlocksFromPackage({
+      documentXml,
+      stylesXml,
+      numberingXml,
+      relsXml,
+      footnotesXml,
+    });
+    const md = emitMarkdownFromBlocks(blocks);
+
+    assert.match(md, /Word \(2007\) and newer/);
+    assert.doesNotMatch(md, /\\\(/);
+    assert.match(md, /\*\*_bold-italic_\*\*/);
+    assert.doesNotMatch(md, /\*\*\*\*bold/);
+    assert.doesNotMatch(md, /\u200b/);
+    assert.match(md, /\*\*StrongText\*\*/);
+    assert.match(md, /_EmphText_/);
+    assert.match(md, /^1\.\s+First numbered/m);
+    assert.match(md, /\[download page\]\(http:\/\/example\.com\/download\)/);
+    assert.match(md, /\[\^fn1\]/);
+    assert.match(md, /\[\^fn1\]:\s*A footnote body/);
+    assert.match(md, /Drop caps continue here/);
+    assert.doesNotMatch(md, /^D$/m);
+    assert.match(md, /One\s*·\s*Two/);
+    assert.doesNotMatch(md, /OneThree/);
+    assert.doesNotMatch(md, /One Three \\ \|/);
+    assert.match(md, /^-\s+Chapter One$/m);
+    assert.doesNotMatch(md, /Chapter One5/);
+  });
+
+  it('emits compact markdown tables without empty columns', async () => {
+    const { emitMarkdownTable } = await import('../../src/convert/blocks.js');
+    const md = emitMarkdownTable([
+      ['December 2007', '', '', '', '', '', ''],
+      ['Sun', '', 'Mon', '', 'Tue', '', 'Wed'],
+      ['1', '', '2', '', '3', '', '4'],
+      ['', '', '', '', '', '', ''],
+    ]);
+    assert.match(md, /December 2007/);
+    assert.match(md, /\|\s*Sun\s*\|\s*Mon\s*\|\s*Tue\s*\|\s*Wed\s*\|/);
+    assert.match(md, /\|\s*1\s*\|\s*2\s*\|\s*3\s*\|\s*4\s*\|/);
+    assert.equal(md.split('\n').length, 4); // header + sep + 2 data rows (empty row dropped)
+  });
+
+  it('ignores w:b w:val=0 and keeps footnote defs out of edit paragraphs', async () => {
+    const { parseDocxBlocksFromPackage, docxStructuredFromPackage } = await import(
+      '../../src/parse/docx-blocks.js'
+    );
+    const documentXml = `<?xml version="1.0"?>
+      <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:body>
+          <w:p>
+            <w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>not-bold</w:t></w:r>
+            <w:r><w:rPr><w:b/></w:rPr><w:t>yes-bold</w:t></w:r>
+            <w:r><w:footnoteReference w:id="1"/></w:r>
+          </w:p>
+        </w:body>
+      </w:document>`;
+    const footnotesXml = `<?xml version="1.0"?>
+      <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:footnote w:id="1"><w:p><w:r><w:t>note body</w:t></w:r></w:p></w:footnote>
+      </w:footnotes>`;
+    const { emitMarkdownFromBlocks } = await import('../../src/convert/blocks.js');
+    const blocks = parseDocxBlocksFromPackage({ documentXml, footnotesXml });
+    const md = emitMarkdownFromBlocks(blocks);
+    assert.match(md, /not-bold/);
+    assert.doesNotMatch(md, /\*\*not-bold\*\*/);
+    assert.match(md, /\*\*yes-bold\*\*/);
+    assert.match(md, /\[\^fn1\]:\s*note body/);
+    const structured = docxStructuredFromPackage({ documentXml, footnotesXml });
+    assert.ok(structured.paragraphs.every((p) => !p.startsWith('[^fn')));
+  });
+});
