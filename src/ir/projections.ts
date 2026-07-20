@@ -87,7 +87,7 @@ function flowBlockToContentBlock(b: CanonicalFlowBlock): ContentBlock[] {
         },
       ];
     case 'blockquote':
-      return b.blocks.flatMap(flowBlockToContentBlock);
+      return [{ type: 'blockquote', blocks: b.blocks.flatMap(flowBlockToContentBlock) }];
     default:
       return [];
   }
@@ -250,6 +250,8 @@ export function contentBlocksToFlow(blocks: ContentBlock[]): CanonicalFlowBlock[
       });
     else if (b.type === 'thematic_break') out.push({ type: 'thematic_break' });
     else if (b.type === 'code') out.push({ type: 'code', text: b.text, language: b.language });
+    else if (b.type === 'blockquote')
+      out.push({ type: 'blockquote', blocks: contentBlocksToFlow(b.blocks) });
   }
   flushList();
   return out;

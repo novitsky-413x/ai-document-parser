@@ -110,7 +110,8 @@ export type ContentBlock =
   | { type: 'list_item'; level: number; ordered?: boolean; runs: InlineRun[] }
   | { type: 'table'; rows: string[][] }
   | { type: 'thematic_break' }
-  | { type: 'code'; text: string; language?: string };
+  | { type: 'code'; text: string; language?: string }
+  | { type: 'blockquote'; blocks: ContentBlock[] };
 
 export interface ConvertResult {
   value: string | Uint8Array | unknown;

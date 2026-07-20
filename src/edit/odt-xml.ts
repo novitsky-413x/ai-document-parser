@@ -40,6 +40,11 @@ function visibleTokens(containerXml: string): VisibleTextToken[] {
   return tokens;
 }
 
+/**
+ * Serialize visible text for ODT.
+ * Single U+0020 spaces stay as character data (ODF collapses only sequences);
+ * runs of 2+ spaces / tabs / line breaks use explicit ODF elements.
+ */
 function renderOdtText(text: string): string {
   let out = '';
   let plain = '';
@@ -48,19 +53,36 @@ function renderOdtText(text: string): string {
     out += escapeXml(plain);
     plain = '';
   };
-  for (const char of text) {
+  for (let index = 0; index < text.length; ) {
+    const char = text[index];
     if (char === ' ') {
-      flush();
-      out += '<text:s/>';
-    } else if (char === '\t') {
+      let count = 0;
+      while (index < text.length && text[index] === ' ') {
+        count++;
+        index++;
+      }
+      if (count === 1) {
+        plain += ' ';
+      } else {
+        flush();
+        out += `<text:s text:c="${count}"/>`;
+      }
+      continue;
+    }
+    if (char === '\t') {
       flush();
       out += '<text:tab/>';
-    } else if (char === '\n') {
+      index++;
+      continue;
+    }
+    if (char === '\n') {
       flush();
       out += '<text:line-break/>';
-    } else {
-      plain += char;
+      index++;
+      continue;
     }
+    plain += char;
+    index++;
   }
   flush();
   return out;
@@ -82,12 +104,19 @@ function replaceContainer(
   );
   if (!result.count) return { xml, count: 0 };
 
+  // Splice only changed leaves. Whitespace leaves (`<text:s/>`, tabs, breaks)
+  // become empty strings and drop out; text leaves get renderOdtText so single
+  // spaces stay as character data (preserving surrounding spans/styles).
   let next = xml;
   for (let index = tokens.length - 1; index >= 0; index--) {
     if (result.texts[index] === tokens[index].decoded) continue;
+    const replacement =
+      result.texts[index].length === 0
+        ? ''
+        : renderOdtText(result.texts[index]);
     next =
       next.slice(0, tokens[index].start) +
-      renderOdtText(result.texts[index]) +
+      replacement +
       next.slice(tokens[index].end);
   }
   return { xml: next, count: result.count };
@@ -96,7 +125,8 @@ function replaceContainer(
 function replaceContentXml(
   xml: string,
   oldString: string,
-  newString: string
+  newString: string,
+  replaceAll: boolean
 ): { xml: string; count: number } {
   let count = 0;
   let next = xml;
@@ -107,6 +137,7 @@ function replaceContentXml(
       xml.slice(range.start, range.end),
       oldString,
       newString,
+      // Count every match inside the paragraph; editOdtText enforces replaceAll.
       true
     );
     count += result.count;
@@ -116,6 +147,13 @@ function replaceContentXml(
         result.xml +
         next.slice(range.end);
     }
+  }
+  // When replaceAll is false, callers must not write if count > 1. Still avoid
+  // applying more than one paragraph mutation into `next` for the dry run that
+  // only needs the count — keep mutated XML only when a single match exists or
+  // replaceAll was requested.
+  if (!replaceAll && count > 1) {
+    return { xml, count };
   }
   return { xml: next, count };
 }
@@ -137,7 +175,7 @@ export async function editOdtText(
   }
 
   const xml = await part.async('string');
-  const result = replaceContentXml(xml, oldString, newString);
+  const result = replaceContentXml(xml, oldString, newString, replaceAll);
   if (result.count === 0) {
     throw new DocumentError(
       'EDIT_TARGET_NOT_FOUND',

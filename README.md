@@ -91,8 +91,9 @@ Notes:
 
 - Convert → **md/html** preserves structure for DOCX (headings, tables, bold/italic/strike, ordered lists, hyperlinks, footnotes; images omitted), HTML, CSV (GFM table), PPTX slides, XLSX sheets. MD→md is passthrough. PDF / legacy `.doc` stay plain text.
 - Convert target `pdf` is **not** supported (create PDF with `writeDocument`).
+- Convert target `pptx` is **not** supported (no PPTX writer in core). PPTX supports parse, convert **to** md/html/text/chunks, and surgical text replace only.
 - **DOCX** and **PPTX** cannot convert **to csv** (use a spreadsheet source). Multi-sheet workbooks export the first sheet to CSV unless `options.sheet` is passed.
-- **Write** for docx/odt/rtf/epub: `{ content }` is plain paragraphs only; use `{ format: 'markdown', content }` or `{ blocks }` for headings/lists/tables. See `writeModes` on `getCapabilities()`.
+- **Write** for docx/odt/rtf/epub: `{ content }` is plain paragraphs only; use `{ format: 'markdown', content }` or `{ blocks }` for headings/lists/tables/blockquotes. See `writeModes` on `getCapabilities()`.
 - **Edit fidelity:** `EditResult.mode` is `surgical` when package markup is patched in place and `rewrite` when content is regenerated. ODS `patchCells` currently reports `rewrite`.
 - `getCapabilities()` (CLI: `capabilities`) reports the exact per-format matrix.
 

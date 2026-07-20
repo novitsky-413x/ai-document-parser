@@ -86,6 +86,11 @@ function replaceInBlocks(
       total += result.count;
       return { ...block, text: result.texts[0] };
     }
+    if (block.type === 'blockquote') {
+      const nested = replaceInBlocks(block.blocks, oldString, newString);
+      total += nested.count;
+      return { ...block, blocks: nested.blocks };
+    }
     return { ...block };
   });
   return { blocks: next, count: total };

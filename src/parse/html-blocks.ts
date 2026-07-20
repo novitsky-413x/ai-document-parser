@@ -252,10 +252,12 @@ export function htmlToBlocks(html: string): ContentBlock[] {
     } else if (tag === 'blockquote') {
       const inner = el.replace(/^<blockquote\b[^>]*>/i, '').replace(/<\/blockquote\s*>$/i, '');
       const nested = htmlToBlocks(inner);
-      if (nested.length) blocks.push(...nested);
+      if (nested.length) blocks.push({ type: 'blockquote', blocks: nested });
       else {
         const runs = parseInline(inner);
-        if (runsToText(runs).trim()) blocks.push({ type: 'paragraph', runs });
+        if (runsToText(runs).trim()) {
+          blocks.push({ type: 'blockquote', blocks: [{ type: 'paragraph', runs }] });
+        }
       }
     }
 
@@ -311,6 +313,21 @@ export function markdownToBlocks(md: string): ContentBlock[] {
       i++;
       continue;
     }
+    if (/^\s*>\s?/.test(line)) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        quoteLines.push(lines[i].replace(/^\s*>\s?/, ''));
+        i++;
+      }
+      const nested = markdownToBlocks(quoteLines.join('\n'));
+      blocks.push({
+        type: 'blockquote',
+        blocks: nested.length
+          ? nested
+          : [{ type: 'paragraph', runs: parseMarkdownInline(quoteLines.join(' ')) }],
+      });
+      continue;
+    }
     if (/^\s*(?:[-*+]|\d+\.)\s+/.test(line)) {
       while (i < lines.length && /^\s*(?:[-*+]|\d+\.)\s+/.test(lines[i])) {
         const m = /^(\s*)([-*+]|\d+\.)\s+(.*)$/.exec(lines[i])!;
@@ -361,7 +378,7 @@ export function markdownToBlocks(md: string): ContentBlock[] {
     while (
       i < lines.length &&
       !/^\s*$/.test(lines[i]) &&
-      !/^(#{1,6})\s+|^\s*[-*+]\s+|^\s*\||^```/.test(lines[i])
+      !/^(#{1,6})\s+|^\s*>|^\s*[-*+]\s+|^\s*\d+\.\s+|^\s*\||^```/.test(lines[i])
     ) {
       para.push(lines[i]);
       i++;

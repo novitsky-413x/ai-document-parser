@@ -169,6 +169,51 @@ describe('clean-room surgical edit', () => {
     assert.match(parsed.text, /Привет мир/);
   });
 
+  it('ODT Cyrillic markdown-write replace leaves no text:s debris', async () => {
+    const file = path.join(dir, 'odt-cyr-edit.odt');
+    const newString = 'Конец ODT-документа. (изменено через edit_document)';
+    await writeDocument(file, {
+      type: 'odt',
+      format: 'markdown',
+      content: 'Конец документа.\n',
+    });
+    const result = await editDocument(file, {
+      type: 'odt',
+      op: 'replace',
+      oldString: 'Конец документа.',
+      newString,
+    });
+    assert.equal(result.mode, 'surgical');
+    assert.equal(result.changes, 1);
+
+    const parsed = await parseDocument(file, { output: 'structured' });
+    const blob = JSON.stringify(parsed.structured);
+    assert.equal(blob.includes('text:s'), false);
+    assert.equal(blob.includes('text:tab'), false);
+    assert.match(parsed.text, new RegExp(newString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+
+  it('ODT replaceAll:false throws MULTIPLE_MATCHES without mutating', async () => {
+    const file = path.join(dir, 'odt-multi.odt');
+    await writeDocument(file, {
+      type: 'odt',
+      format: 'markdown',
+      content: 'alpha\n\nalpha\n',
+    });
+    const before = readFileSync(file);
+    await assert.rejects(
+      editDocument(file, {
+        type: 'odt',
+        op: 'replace',
+        oldString: 'alpha',
+        newString: 'beta',
+      }),
+      (error: unknown) =>
+        error instanceof DocumentError && error.code === 'MULTIPLE_MATCHES'
+    );
+    assert.deepEqual(readFileSync(file), before);
+  });
+
   it('patches ODS cells and reports package rewrite', async () => {
     const file = path.join(dir, 'sheet.ods');
     const wb = XLSX.utils.book_new();

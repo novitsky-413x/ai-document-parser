@@ -81,7 +81,8 @@ Use `convertDocument` when transforming an **existing** file (e.g. md→docx alr
 ## Presentations (PPTX)
 
 - Parse: `{ format: 'pptx', slides: string[][] }` — each slide is an array of text blocks.
-- Convert: `convertDocument(path, 'md')` yields `## Slide 1` … sections.
+- Convert **from** PPTX: `convertDocument(path, 'md'|'html'|'text'|'chunks')` only.
+- There is **no** create-from-scratch PPTX write and **no** convert **target** `pptx`.
 - Surgical text replace preserves slides/layout/media:
 
 ```ts
@@ -102,6 +103,7 @@ SmartArt, adding shapes, and adding slides are not supported.
 - `type:'odt'|'rtf'|'epub', op:'replace'` performs surgical text replacement.
 - EPUB accepts `chapter` (one-based spine index or resolved XHTML path).
 - RTF v1 edits body paragraphs and intentionally excludes fields/tables/binary destinations.
+- Warnings such as `ODF_BASIC_PARSE`, `RTF_BASIC_PARSE`, or `EPUB_SPINE_PARSE` mean limited fidelity on exotic markup; surgical/rewrite edit still applies to the supported text model.
 - For structural changes, use explicit flow rewrite:
 
 ```ts

@@ -70,9 +70,9 @@ Supported `to`: `'md' | 'html' | 'csv' | 'text' | 'chunks' | 'rtf' | 'epub' | 'd
 | pdf | md, html, text, chunks (plain) |
 | md / html / csv | md, html, text, csv, chunks, docx, odt, rtf, epub |
 
-Not supported as convert **targets**: `'pdf'` (for PDF creation use `writeDocument`).
+Not supported as convert **targets**: `'pdf'` (use `writeDocument` for plain-text PDF) and `'pptx'` (no PPTX writer; parse / convert-from / surgical replace only).
 
-Use `getCapabilities()` (also exposed as CLI `capabilities`) to inspect per-format parse/convert/edit/write support.
+`parseDocument(..., { output: 'ast' })` for flow formats (including DOCX/PPTX) returns canonical flow blocks derived from structured `blocks` when available.
 
 Extensionless paths and mislabeled binaries are detected from magic bytes / ZIP package parts when possible.
 

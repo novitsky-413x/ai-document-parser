@@ -23,10 +23,29 @@ function extractOdfCodeText(inner: string): string {
   );
 }
 
+function appendVisibleText(runs: CanonicalInline[], text: string): void {
+  if (!text) return;
+  const last = runs[runs.length - 1];
+  if (last && !last.bold && !last.italic && !last.strike && !last.code && !last.href) {
+    last.text += text;
+    return;
+  }
+  runs.push({ text });
+}
+
+function spaceCountFromOdfTag(tag: string): number {
+  const raw =
+    /\btext:c\s*=\s*"(\d+)"/i.exec(tag)?.[1] ??
+    /\btext:c\s*=\s*'(\d+)'/i.exec(tag)?.[1];
+  return raw ? Math.max(1, Number(raw)) : 1;
+}
+
 function parseInlineOdf(text: string): CanonicalInline[] {
   const runs: CanonicalInline[] = [];
+  // Keep <text:s/> / <text:tab/> / <text:line-break/> as visible text — otherwise the
+  // leading "<" is skipped by the regex engine and "text:s/>…" leaks into plain runs.
   const re =
-    /<text:a\b[^>]*xlink:href="([^"]*)"[^>]*>([\s\S]*?)<\/text:a>|<text:span\b[^>]*>([\s\S]*?)<\/text:span>|([^<]+)/g;
+    /<text:a\b[^>]*xlink:href="([^"]*)"[^>]*>([\s\S]*?)<\/text:a>|<text:span\b[^>]*>([\s\S]*?)<\/text:span>|<text:s\b[^>]*\/>|<text:s\b[^>]*>\s*<\/text:s>|<text:tab\b[^>]*\/>|<text:tab\b[^>]*>\s*<\/text:tab>|<text:line-break\b[^>]*\/>|<text:line-break\b[^>]*>\s*<\/text:line-break>|([^<]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m[1] != null && m[2] != null) {
@@ -64,9 +83,22 @@ function parseInlineOdf(text: string): CanonicalInline[] {
           ...(code ? { code: true } : {}),
         });
       }
-    } else if (plain) {
-      const t = decodeXmlEntities(plain);
-      if (t.trim()) runs.push({ text: t });
+      continue;
+    }
+    if (/^<text:s\b/i.test(m[0])) {
+      appendVisibleText(runs, ' '.repeat(spaceCountFromOdfTag(m[0])));
+      continue;
+    }
+    if (/^<text:tab\b/i.test(m[0])) {
+      appendVisibleText(runs, '\t');
+      continue;
+    }
+    if (/^<text:line-break\b/i.test(m[0])) {
+      appendVisibleText(runs, '\n');
+      continue;
+    }
+    if (plain) {
+      appendVisibleText(runs, decodeXmlEntities(plain));
     }
   }
   if (!runs.length) {

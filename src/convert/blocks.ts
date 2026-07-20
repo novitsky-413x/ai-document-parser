@@ -23,6 +23,8 @@ export function flattenBlocksToParagraphs(blocks: ContentBlock[]): string[] {
     } else if (b.type === 'code') {
       const t = b.text.trim();
       if (t) out.push(t);
+    } else if (b.type === 'blockquote') {
+      out.push(...flattenBlocksToParagraphs(b.blocks));
     }
   }
   return out;
@@ -175,6 +177,16 @@ export function emitMarkdownFromBlocks(blocks: ContentBlock[]): string {
       const ticks = /`{3,}/.exec(body)?.[0].length ?? 0;
       const fence = '`'.repeat(Math.max(3, ticks + 1));
       parts.push(`${fence}${lang}\n${body}\n${fence}`);
+    } else if (b.type === 'blockquote') {
+      const inner = emitMarkdownFromBlocks(b.blocks);
+      if (inner) {
+        parts.push(
+          inner
+            .split('\n')
+            .map((line) => (line.length ? `> ${line}` : '>'))
+            .join('\n')
+        );
+      }
     }
   }
   flushList();
@@ -249,6 +261,12 @@ export function emitHtmlFromBlocks(blocks: ContentBlock[]): string {
       const lang = (b.language ?? '').replace(/[^A-Za-z0-9_+-]/g, '');
       const langAttr = lang ? ` class="language-${lang}"` : '';
       parts.push(`<pre><code${langAttr}>${escapeHtml(b.text)}</code></pre>`);
+    } else if (b.type === 'blockquote') {
+      const inner = emitHtmlFromBlocks(b.blocks)
+        .replace(/^<!DOCTYPE html>\s*<html><body>\s*/i, '')
+        .replace(/\s*<\/body><\/html>\s*$/i, '')
+        .trim();
+      parts.push(`<blockquote>\n${inner}\n</blockquote>`);
     }
   }
   closeAll();

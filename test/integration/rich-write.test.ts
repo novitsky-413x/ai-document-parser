@@ -183,6 +183,51 @@ Paragraph with **bold**.
     assert.ok(odtTypes.includes('list_item'));
   });
 
+  it('docx AST from markdown write is non-empty', async () => {
+    const file = path.join(dir, 'ast.docx');
+    await writeDocument(file, {
+      type: 'docx',
+      format: 'markdown',
+      content: '# T\n\n- a\n\n| A | B |\n|---|---|\n| 1 | 2 |\n',
+    });
+    const { ast } = await parseDocument(file, { output: 'ast' });
+    assert.ok(ast);
+    assert.equal(ast!.type, 'flow');
+    if (ast!.type !== 'flow') throw new Error('expected flow');
+    assert.ok(ast.blocks.length > 0);
+    const types = ast.blocks.map((b) => (b as { type: string }).type);
+    assert.ok(types.includes('heading'));
+    assert.ok(types.includes('list'));
+    assert.ok(types.includes('table'));
+  });
+
+  it('markdown blockquote is not a literal > paragraph', async () => {
+    const md = '> Цитата: важный тезис\n';
+    const mdPath = path.join(dir, 'quote.md');
+    writeFileSync(mdPath, md, 'utf8');
+
+    const mdParsed = await parseDocument(mdPath, { output: 'structured' });
+    const mdBlocks = (mdParsed.structured as { blocks: ContentBlock[] }).blocks;
+    assert.ok(mdBlocks.some((b) => b.type === 'blockquote'));
+
+    const file = path.join(dir, 'quote.docx');
+    await writeDocument(file, { type: 'docx', format: 'markdown', content: md });
+    const parsed = await parseDocument(file, { output: 'structured' });
+    const structured = parsed.structured as DocxStructured;
+    assert.match(parsed.text, /Цитата: важный тезис/);
+    assert.equal(
+      structured.blocks.some(
+        (b) =>
+          b.type === 'paragraph' &&
+          b.runs.some((r) => r.text.trimStart().startsWith('>'))
+      ),
+      false
+    );
+
+    const converted = await convertDocument(mdPath, 'md');
+    assert.match(String(converted.value), /^>\s*Цитата:/m);
+  });
+
   it('rejects mixing blocks with content', async () => {
     await assert.rejects(
       () =>

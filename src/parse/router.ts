@@ -180,6 +180,7 @@ export async function parseDocument(
         }
         return finish('docx', text, filePath, output, {
           paragraphs: structured.paragraphs,
+          blocks: structured.blocks,
         });
       } catch (err) {
         // ZIP might be xlsx/pptx without a reliable extension
@@ -411,6 +412,7 @@ function pptxResult(
   return finish('pptx', text, filePath, output, {
     slides: structured.slides,
     paragraphs: pptxToParagraphs(structured),
+    blocks: structured.blocks,
   });
 }
 
