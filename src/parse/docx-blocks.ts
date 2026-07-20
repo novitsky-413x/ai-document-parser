@@ -2,6 +2,7 @@ import { DocumentError } from '../utils/errors.js';
 import type { ContentBlock, DocxStructured, InlineRun } from '../types.js';
 import { flattenBlocksToParagraphs } from '../convert/blocks.js';
 import { isMonospaceFont, parseCodeStyleId } from '../utils/code-style.js';
+import { coalesceAdjacentBlockquotes, isQuoteStyleId } from '../utils/quote-style.js';
 import type JSZip from 'jszip';
 
 export type DocxPackageParts = {
@@ -462,6 +463,10 @@ function isListItem(paraXml: string): boolean {
   return /<w:numPr[\s\S]*?<\/w:numPr>/.test(paraXml) || /<w:numPr\b[^/]*\/>/.test(paraXml);
 }
 
+function isQuoteParagraph(paraXml: string): boolean {
+  return isQuoteStyleId(paragraphStyleId(paraXml));
+}
+
 function listLevel(paraXml: string): number {
   const m = /<w:ilvl\b[^>]*w:val="(\d+)"/.exec(paraXml);
   return m ? Number(m[1]) : 0;
@@ -683,6 +688,7 @@ export function parseDocxBlocksFromPackage(parts: DocxPackageParts): ContentBloc
     const block = paraToBlock(part.xml, ctx);
     if (!block) continue;
 
+    let next: ContentBlock = block;
     if (dropCapBuf && (block.type === 'paragraph' || block.type === 'list_item')) {
       const runs = [...block.runs];
       if (runs.length) {
@@ -691,10 +697,18 @@ export function parseDocxBlocksFromPackage(parts: DocxPackageParts): ContentBloc
         runs.push({ text: dropCapBuf });
       }
       dropCapBuf = '';
-      blocks.push({ ...block, runs });
+      next = { ...block, runs };
     } else {
       dropCapBuf = '';
-      blocks.push(block);
+    }
+
+    if (
+      isQuoteParagraph(part.xml) &&
+      (next.type === 'paragraph' || next.type === 'heading')
+    ) {
+      blocks.push({ type: 'blockquote', blocks: [next] });
+    } else {
+      blocks.push(next);
     }
   }
 
@@ -715,7 +729,7 @@ export function parseDocxBlocksFromPackage(parts: DocxPackageParts): ContentBloc
     }
   }
 
-  return blocks;
+  return coalesceAdjacentBlockquotes(blocks);
 }
 
 /** Parse word/document.xml only (no styles/numbering/links/notes). */

@@ -24,7 +24,7 @@ src/
   parse/          parseDocument router, detect, formats, pdf, pptx, docx-blocks, html-blocks, text-formats, legacy-doc
   convert/        convertDocument + blocks emit helpers
   edit/           surgical DOCX OOXML + spreadsheet patch
-  write/          create docx / xlsx / plain pdf
+  write/          create docx / xlsx / plain pdf / odt / pptx
   utils/          DocumentError, path helpers, text escape helpers
   index.ts        public barrel
   cli.ts          bin: ai-document-parser

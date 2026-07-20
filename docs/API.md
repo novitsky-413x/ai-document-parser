@@ -70,9 +70,11 @@ Supported `to`: `'md' | 'html' | 'csv' | 'text' | 'chunks' | 'rtf' | 'epub' | 'd
 | pdf | md, html, text, chunks (plain) |
 | md / html / csv | md, html, text, csv, chunks, docx, odt, rtf, epub |
 
-Not supported as convert **targets**: `'pdf'` (use `writeDocument` for plain-text PDF) and `'pptx'` (no PPTX writer; parse / convert-from / surgical replace only).
+Not supported as convert **targets**: `'pdf'` (use `writeDocument` for plain-text PDF) and `'pptx'` (create with `writeDocument({ type: 'pptx', … })`; convert **from** pptx is supported).
 
 `parseDocument(..., { output: 'ast' })` for flow formats (including DOCX/PPTX) returns canonical flow blocks derived from structured `blocks` when available.
+
+Multi-sheet CSV/MD: default is the first sheet; `ConvertResult.messages` may include `{ code: 'CSV_FIRST_SHEET', … }`. Pass `options.sheet` to select another sheet.
 
 Extensionless paths and mislabeled binaries are detected from magic bytes / ZIP package parts when possible.
 
@@ -142,34 +144,38 @@ and arbitrary existing PDF page text are not editable.
 
 ## `writeDocument(path, input)`
 
-Create a new file from scratch. For **docx / odt / rtf / epub**, pick **exactly one** mode:
+Create a new file from scratch. For **docx / odt / rtf / epub / pptx**, pick **exactly one** mode:
 
 | Mode | Input shape | Behavior |
 |------|-------------|----------|
 | **plain** | `{ type, content: string \| string[] }` | One paragraph per line / array entry. Markdown markers (`- item`, `\| a \| b \|`) are **literal text**, not lists/tables. |
-| **blocks** | `{ type, blocks: ContentBlock[] }` | Emit real headings, lists, tables, emphasis, links, code. |
+| **blocks** | `{ type, blocks: ContentBlock[] }` | Emit real headings, lists, tables, emphasis, links, code, blockquotes. |
 | **markup** | `{ type, format: 'markdown' \| 'html', content: string }` | Parse MD/HTML → same structured emit as convert. |
+
+Markdown `>` blockquotes round-trip for docx/odt/rtf/epub via durable quote styles (`ADPQuote` / Word `Quote`) or RTF `{\*\adpquote}`.
+
+PPTX: `#` / `##` headings start a new slide; following blocks become body text. Convert **to** `pptx` remains unsupported.
 
 ```ts
 // Plain paragraphs only
 { type: 'docx', content: 'Paragraph one\nParagraph two' }
 
-// Preferred for LLM agents — rich DOCX/ODT/RTF/EPUB
-{ type: 'docx', format: 'markdown', content: '# Title\n\n- item\n\n| A | B |\n|---|---|\n| 1 | 2 |\n' }
+// Preferred for LLM agents — rich DOCX/ODT/RTF/EPUB/PPTX
+{ type: 'docx', format: 'markdown', content: '# Title\n\n> quote\n\n- item\n' }
 
 // Typed hosts
 { type: 'docx', blocks: [{ type: 'heading', level: 1, runs: [{ text: 'Title' }] }] }
 
 { type: 'xlsx' | 'xls', sheets: Record<string, cell[][]> }
 { type: 'pdf', content: string, title?: string }  // plain text PDF
-{ type: 'odt' | 'rtf' | 'epub', /* same plain | blocks | format+content as docx */, title?: string }
+{ type: 'odt' | 'rtf' | 'epub' | 'pptx', /* same plain | blocks | format+content as docx */, title?: string }
 ```
 
 `WriteResult` includes `summary.mode` (`'plain' | 'blocks' | 'markdown' | 'html'`) and optional `warnings` (e.g. `PLAIN_WRITE_IGNORED_MARKUP` when plain `content` looks like markdown structure).
 
-`getCapabilities()` sets `writeModes: ['plain','blocks','markdown','html']` for docx/odt/rtf/epub (spreadsheets/PDF: `['plain']` only).
+`getCapabilities()` sets `writeModes: ['plain','blocks','markdown','html']` for docx/odt/rtf/epub/pptx (spreadsheets/PDF: `['plain']` only).
 
-Advanced: `writeDocxFromBlocks` / `writeOdtFromBlocks` are exported for hosts that already hold canonical flow blocks.
+Advanced: `writeDocxFromBlocks` / `writeOdtFromBlocks` / `writePptxFromBlocks` are exported for hosts that already hold canonical flow blocks.
 
 ## `DocumentError`
 

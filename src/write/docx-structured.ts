@@ -14,6 +14,7 @@ import {
 } from 'docx';
 import type { CanonicalFlowBlock, CanonicalInline, CanonicalTableCell } from '../ir/types.js';
 import { codeStyleId } from '../utils/code-style.js';
+import { QUOTE_STYLE_ID } from '../utils/quote-style.js';
 
 const NUMBERING_REF = 'adp-ordered';
 const MAX_LIST_LEVEL = 8;
@@ -112,6 +113,7 @@ export async function writeDocxFromBlocks(
         if (inner.type === 'paragraph' || inner.type === 'heading') {
           children.push(
             new Paragraph({
+              style: QUOTE_STYLE_ID,
               indent: { left: 720 },
               children: runsToChildren(inner.runs),
             })
@@ -128,15 +130,26 @@ export async function writeDocxFromBlocks(
   const codeStyles = collectCodeStyles(blocks);
   const doc = new Document({
     styles: {
-      paragraphStyles: codeStyles.map((id) => ({
-        id,
-        name: id === 'ADPCode' ? 'ADP Code' : id.replace(/^ADPCode_/, 'ADP Code '),
-        basedOn: 'Normal',
-        next: 'Normal',
-        quickStyle: true,
-        run: { font: CODE_FONT, size: 20 },
-        paragraph: { shading: { type: 'clear' as const, fill: 'F5F5F5' } },
-      })),
+      // Cast: docx typings reject mixed style option shapes (code vs quote).
+      paragraphStyles: [
+        ...codeStyles.map((id) => ({
+          id,
+          name: id === 'ADPCode' ? 'ADP Code' : id.replace(/^ADPCode_/, 'ADP Code '),
+          basedOn: 'Normal',
+          next: 'Normal',
+          quickStyle: true,
+          run: { font: CODE_FONT, size: 20 },
+          paragraph: { shading: { type: 'clear' as const, fill: 'F5F5F5' } },
+        })),
+        {
+          id: QUOTE_STYLE_ID,
+          name: 'ADP Quote',
+          basedOn: 'Normal',
+          next: 'Normal',
+          quickStyle: true,
+          paragraph: { indent: { left: 720 } },
+        },
+      ] as never,
     },
     numbering: {
       config: [

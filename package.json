@@ -1,6 +1,6 @@
 {
     "name": "ai-document-parser",
-    "version": "0.3.102",
+    "version": "0.3.103",
     "description": "Parse, convert, surgically edit, and write office documents for AI agents and Node apps — permissive deps only",
     "license": "MIT",
     "type": "module",

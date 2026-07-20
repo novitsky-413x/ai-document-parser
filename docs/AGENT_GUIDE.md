@@ -46,7 +46,7 @@ await editDocument(path, {
 - Creating a new workbook: `writeDocument(path, { type: 'xlsx', sheets })`.
 - Convert: `convertDocument(path, 'csv' | 'md' | …)`.
 
-## Create rich DOCX / ODT / RTF / EPUB
+## Create rich DOCX / ODT / RTF / EPUB / PPTX
 
 **Do not** put markdown into `{ content }` and expect Word lists/tables — that path is **plain paragraphs only** (`- item` stays literal text). Check `getCapabilities('docx').writeModes`.
 
@@ -60,6 +60,8 @@ await writeDocument('report.docx', {
 
 Paragraph with **bold** and *italic*.
 
+> Important quote
+
 - Хлеб
 - Молоко
 
@@ -70,7 +72,7 @@ Paragraph with **bold** and *italic*.
 });
 ```
 
-Same shape works with `type: 'odt' | 'rtf' | 'epub'`.
+Same shape works with `type: 'odt' | 'rtf' | 'epub' | 'pptx'`. Markdown `>` blockquotes round-trip for docx/odt/rtf/epub (durable quote styles / markers).
 
 **Typed hosts** can pass `blocks: ContentBlock[]` instead of `format` + `content`.
 
@@ -81,8 +83,19 @@ Use `convertDocument` when transforming an **existing** file (e.g. md→docx alr
 ## Presentations (PPTX)
 
 - Parse: `{ format: 'pptx', slides: string[][] }` — each slide is an array of text blocks.
-- Convert **from** PPTX: `convertDocument(path, 'md'|'html'|'text'|'chunks')` only.
-- There is **no** create-from-scratch PPTX write and **no** convert **target** `pptx`.
+- Convert **from** PPTX: `convertDocument(path, 'md'|'html'|'text'|'chunks')` only (no convert **target** `pptx`).
+- Create-from-scratch:
+
+```ts
+await writeDocument('deck.pptx', {
+  type: 'pptx',
+  format: 'markdown',
+  content: '# Title slide\n\nBody line\n\n## Next slide\n\nMore text\n',
+});
+```
+
+`#` / `##` headings start a new slide; following blocks become body paragraphs. Same `plain` / `blocks` / `format+content` modes as other rich writers (`writeModes` on capabilities).
+
 - Surgical text replace preserves slides/layout/media:
 
 ```ts
@@ -96,7 +109,7 @@ await editDocument(path, {
 ```
 
 Use `includeNotes: true` only when notes are intended edit targets. Charts,
-SmartArt, adding shapes, and adding slides are not supported.
+SmartArt, adding shapes, and adding slides via edit are not supported.
 
 ## ODT / RTF / EPUB edits
 
@@ -128,10 +141,10 @@ Use `convertDocument` when you need a single artifact for RAG or downstream tool
 | Embedding chunks | `convertDocument(path, 'chunks')` or `parseDocument(..., { output: 'chunks' })` |
 | Spreadsheet dump | `convertDocument(xlsxPath, 'csv')` or `'md'` for GFM tables |
 
-Do **not** convert DOCX/PPTX to `csv`. The only unsupported convert target is `pdf` (use `writeDocument` for plain-text PDF).  
+Do **not** convert DOCX/PPTX to `csv`. Unsupported convert targets: `pdf` (use `writeDocument` for plain-text PDF) and `pptx` (create decks with `writeDocument({ type: 'pptx', … })`).  
 Flow formats (docx/odt/rtf/epub/md/html) also convert to binary `docx` / `odt` / `rtf` / `epub`.  
 PDF / legacy `.doc` → md is plain text only (no reliable document structure).  
-Multi-sheet workbooks: pass `options.sheet` to `convertDocument(path, 'csv', { sheet: 'Q2' })`.
+Multi-sheet workbooks: default CSV/MD export is the **first sheet** and may include a `CSV_FIRST_SHEET` message on `ConvertResult.messages`. Pass `options.sheet` to select another sheet: `convertDocument(path, 'csv', { sheet: 'Q2' })`.
 
 ## When to use AST / chunks
 

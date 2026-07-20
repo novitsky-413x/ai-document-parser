@@ -26,6 +26,7 @@ export {
   writeSpreadsheet,
   writeDocxFromBlocks,
   writeOdtFromBlocks,
+  writePptxFromBlocks,
 } from './write/index.js';
 export { DocumentError } from './utils/errors.js';
 export { getCapabilities } from './adapters/registry.js';

@@ -3,6 +3,7 @@ import { DocumentError, wrapError } from '../utils/errors.js';
 import { decodeXmlEntities } from '../utils/xml.js';
 import { loadZipBuffer } from '../utils/zip.js';
 import { parseCodeStyleId } from '../utils/code-style.js';
+import { coalesceAdjacentBlockquotes, isQuoteStyleId } from '../utils/quote-style.js';
 import type { CanonicalFlowBlock, CanonicalInline, ParsedCanonical } from '../ir/types.js';
 import { buildParsedCanonical } from '../ir/projections.js';
 
@@ -240,6 +241,9 @@ function parseOdtParagraph(pXml: string): CanonicalFlowBlock | null {
   }
   const runs = parseInlineOdf(inner);
   if (!runsToText(runs)) return null;
+  if (isQuoteStyleId(style)) {
+    return { type: 'blockquote', blocks: [{ type: 'paragraph', runs }] };
+  }
   return { type: 'paragraph', runs };
 }
 
@@ -310,7 +314,7 @@ function parseOdtFragment(
       i = end;
     }
   }
-  return blocks;
+  return coalesceAdjacentBlockquotes(blocks);
 }
 
 function indexOfTag(xml: string, qname: string, from: number): number {

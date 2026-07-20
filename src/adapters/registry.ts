@@ -36,9 +36,9 @@ const KIND_MAP: Record<string, AdapterCapabilities['kind']> = {
   odp: 'presentation',
 };
 
-const WRITE_FORMATS = new Set(['docx', 'xlsx', 'xls', 'pdf', 'odt', 'rtf', 'epub']);
-/** Rich create (blocks / markdown / html) for flow binary writers. */
-const RICH_WRITE_FORMATS = new Set(['docx', 'odt', 'rtf', 'epub']);
+const WRITE_FORMATS = new Set(['docx', 'xlsx', 'xls', 'pdf', 'odt', 'rtf', 'epub', 'pptx']);
+/** Rich create (blocks / markdown / html) for flow / presentation writers. */
+const RICH_WRITE_FORMATS = new Set(['docx', 'odt', 'rtf', 'epub', 'pptx']);
 const EDIT_CAPABILITIES: Record<
   string,
   Pick<AdapterCapabilities, 'editModes' | 'editOps'>

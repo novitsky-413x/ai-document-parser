@@ -12,13 +12,14 @@ import { writePdf } from './pdf.js';
 import { writeSpreadsheet } from './spreadsheet.js';
 import { writeDocxFromBlocks } from './docx-structured.js';
 import { writeOdtFromBlocks } from './odt.js';
+import { writePptxFromBlocks } from './pptx.js';
 import { emitRtfFromFlow } from '../parse/rtf.js';
 import { emitEpubFromFlow } from '../parse/epub.js';
 import { contentBlocksToFlow } from '../ir/projections.js';
 import { htmlToBlocks, markdownToBlocks } from '../parse/html-blocks.js';
 import { ensureParentDir, writeFileAtomic } from '../utils/paths.js';
 
-type FlowWriteType = 'docx' | 'odt' | 'rtf' | 'epub';
+type FlowWriteType = 'docx' | 'odt' | 'rtf' | 'epub' | 'pptx';
 
 type ResolvedWrite = {
   blocks: ContentBlock[];
@@ -164,10 +165,11 @@ function writeResult(
 /**
  * Create a new document from scratch.
  *
- * Flow formats (docx / odt / rtf / epub):
+ * Flow formats (docx / odt / rtf / epub / pptx):
  * - `{ content }` — plain paragraphs only (markdown markers are literal text)
  * - `{ blocks }` — structured ContentBlocks
  * - `{ format: 'markdown' | 'html', content }` — parse markup then emit rich structure
+ *   (PPTX: `#` / `##` headings start a new slide)
  */
 export async function writeDocument(
   filePath: string,
@@ -230,7 +232,12 @@ export async function writeDocument(
     };
   }
 
-  if (input.type === 'odt' || input.type === 'rtf' || input.type === 'epub') {
+  if (
+    input.type === 'odt' ||
+    input.type === 'rtf' ||
+    input.type === 'epub' ||
+    input.type === 'pptx'
+  ) {
     const expected = `.${input.type}`;
     if (ext && ext !== expected) {
       throw new DocumentError(
@@ -248,6 +255,14 @@ export async function writeDocument(
     if (input.type === 'rtf') {
       await writeFileAtomic(filePath, emitRtfFromFlow(flow));
       return writeResult(filePath, `Created RTF: ${filePath}`, resolved);
+    }
+    if (input.type === 'pptx') {
+      await writeFileAtomic(filePath, await writePptxFromBlocks(flow));
+      return writeResult(
+        filePath,
+        `Created PPTX: ${filePath} (${resolved.mode} mode)`,
+        resolved
+      );
     }
     const title =
       'title' in input && typeof input.title === 'string'
@@ -268,3 +283,4 @@ export { writePdf } from './pdf.js';
 export { writeSpreadsheet } from './spreadsheet.js';
 export { writeDocxFromBlocks } from './docx-structured.js';
 export { writeOdtFromBlocks } from './odt.js';
+export { writePptxFromBlocks } from './pptx.js';

@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import type { CanonicalFlowBlock, CanonicalInline } from '../ir/types.js';
 import { codeStyleId } from '../utils/code-style.js';
+import { QUOTE_STYLE_ID } from '../utils/quote-style.js';
 import { escapeXml } from '../utils/xml.js';
 import { sanitizeHref } from '../utils/url.js';
 
@@ -24,7 +25,7 @@ function runsToOdfXml(runs: CanonicalInline[]): string {
     .join('');
 }
 
-type OdfCtx = { tables: number; codeStyles: Set<string> };
+type OdfCtx = { tables: number; codeStyles: Set<string>; hasQuote: boolean };
 
 function blockToOdfXml(block: CanonicalFlowBlock, ctx: OdfCtx): string {
   if (block.type === 'heading') {
@@ -47,7 +48,15 @@ function blockToOdfXml(block: CanonicalFlowBlock, ctx: OdfCtx): string {
     return '<text:p/>';
   }
   if (block.type === 'blockquote') {
-    return block.blocks.map((inner) => blockToOdfXml(inner, ctx)).join('');
+    ctx.hasQuote = true;
+    return block.blocks
+      .map((inner) => {
+        if (inner.type === 'paragraph' || inner.type === 'heading') {
+          return `<text:p text:style-name="${QUOTE_STYLE_ID}">${runsToOdfXml(inner.runs)}</text:p>`;
+        }
+        return blockToOdfXml(inner, ctx);
+      })
+      .join('');
   }
   if (block.type === 'list') {
     const items = block.items
@@ -93,8 +102,14 @@ function codeParagraphStyleXml(styleName: string): string {
   </style:style>`;
 }
 
-function buildContentStyles(codeStyles: Set<string>): string {
+function buildContentStyles(codeStyles: Set<string>, hasQuote: boolean): string {
   const codeDefs = [...codeStyles].map(codeParagraphStyleXml).join('\n  ');
+  const quoteDef = hasQuote
+    ? `<style:style style:name="${QUOTE_STYLE_ID}" style:family="paragraph">
+    <style:paragraph-properties fo:margin-left="0.5in"/>
+    <style:text-properties fo:font-style="italic"/>
+  </style:style>`
+    : '';
   return `<office:automatic-styles>
   <text:list-style style:name="ADPBullet">
     <text:list-level-style-bullet text:level="1" text:bullet-char="•"/>
@@ -111,6 +126,7 @@ function buildContentStyles(codeStyles: Set<string>): string {
   <style:style style:name="ADPBI" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style>
   <style:style style:name="ADPS" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style>
   <style:style style:name="ADPCodeInline" style:family="text"><style:text-properties style:font-name="Courier New" fo:font-family="Courier New" fo:font-size="10pt"/></style:style>
+  ${quoteDef}
   ${codeDefs}
 </office:automatic-styles>`;
 }
@@ -123,7 +139,7 @@ const ODF_NS = `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
  xmlns:xlink="http://www.w3.org/1999/xlink"`;
 
 export async function writeOdtFromBlocks(blocks: CanonicalFlowBlock[]): Promise<Buffer> {
-  const ctx: OdfCtx = { tables: 0, codeStyles: new Set(['ADPCode']) };
+  const ctx: OdfCtx = { tables: 0, codeStyles: new Set(['ADPCode']), hasQuote: false };
   const body = blocks.map((b) => blockToOdfXml(b, ctx)).join('');
   const zip = new JSZip();
   zip.file('mimetype', 'application/vnd.oasis.opendocument.text', { compression: 'STORE' });
@@ -131,7 +147,7 @@ export async function writeOdtFromBlocks(blocks: CanonicalFlowBlock[]): Promise<
     'content.xml',
     `<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content ${ODF_NS} office:version="1.2">
-  ${buildContentStyles(ctx.codeStyles)}
+  ${buildContentStyles(ctx.codeStyles, ctx.hasQuote)}
   <office:body><office:text>${body}</office:text></office:body>
 </office:document-content>`
   );

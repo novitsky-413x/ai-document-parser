@@ -7,6 +7,7 @@ import type {
 } from '../ir/types.js';
 import { buildParsedCanonical } from '../ir/projections.js';
 import { codeStyleId } from '../utils/code-style.js';
+import { coalesceAdjacentBlockquotes } from '../utils/quote-style.js';
 
 const TABLE_WIDTH_TWIPS = 9000;
 const LIST_INDENT = 720;
@@ -103,6 +104,10 @@ function isRtfCodeParagraph(segment: string): boolean {
   if (extractAdpCodeLang(segment)) return true;
   // Our emitter starts fenced code with \pard\f1; inline code uses mid-run \f1 after \pard\f0.
   return /\\pard\\f1\b/.test(segment);
+}
+
+function isRtfQuoteParagraph(segment: string): boolean {
+  return /\{\\\*\\adpquote\}/.test(segment);
 }
 
 /** End index (exclusive) of a `{ ... }` group starting at `start`. */
@@ -226,7 +231,8 @@ function parseRtfInlinePlain(segment: string, codePage = 1252): CanonicalInline[
 function stripAdpMarkers(segment: string): string {
   return segment
     .replace(/\{\\\*\\adpcodelang\s+[A-Za-z0-9_+-]+\}/g, '')
-    .replace(/\{\\\*\\adplist\s+[ou]\s+\d+\}/g, '');
+    .replace(/\{\\\*\\adplist\s+[ou]\s+\d+\}/g, '')
+    .replace(/\{\\\*\\adpquote\}/g, '');
 }
 
 type FlatListItem = { level: number; ordered?: boolean; runs: CanonicalInline[] };
@@ -311,6 +317,15 @@ function parseParagraphRegion(region: string, codePage = 1252): CanonicalFlowBlo
       continue;
     }
 
+    if (isRtfQuoteParagraph(segment)) {
+      flushList();
+      const runs = parseRtfInline(stripAdpMarkers(segment), codePage);
+      if (runs.length) {
+        out.push({ type: 'blockquote', blocks: [{ type: 'paragraph', runs }] });
+      }
+      continue;
+    }
+
     const listMeta = extractAdpListMeta(segment);
     if (listMeta) {
       if (listBuf.length && listMeta.level === 0 && listOrdered !== listMeta.ordered) {
@@ -347,7 +362,7 @@ function parseParagraphRegion(region: string, codePage = 1252): CanonicalFlowBlo
     }
   }
   flushList();
-  return out;
+  return coalesceAdjacentBlockquotes(out);
 }
 
 function stripListPrefix(runs: CanonicalInline[]): CanonicalInline[] {
@@ -454,7 +469,16 @@ function emitBlock(b: CanonicalFlowBlock, parts: string[]): void {
     parts.push(escapeRtf('---'));
     parts.push('\\par ');
   } else if (b.type === 'blockquote') {
-    for (const inner of b.blocks) emitBlock(inner, parts);
+    for (const inner of b.blocks) {
+      if (inner.type === 'paragraph' || inner.type === 'heading') {
+        parts.push('{\\*\\adpquote}');
+        parts.push('\\pard\\f0\\li720\\i ');
+        emitRuns(inner.runs, parts);
+        parts.push('\\i0\\par ');
+      } else {
+        emitBlock(inner, parts);
+      }
+    }
   } else if (b.type === 'list') {
     emitList(b, 0, parts);
   } else if (b.type === 'table') {

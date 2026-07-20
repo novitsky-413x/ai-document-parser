@@ -230,7 +230,7 @@ export type WriteMarkupFormat = 'markdown' | 'html';
  * For flow formats (docx / odt / rtf / epub), exactly one of:
  * - `content` only → **plain** paragraphs (one line / array entry = one paragraph; MD markers are literal)
  * - `blocks` → structured {@link ContentBlock}s
- * - `format: 'markdown' | 'html'` + `content` → parse markup then emit rich OOXML / ODF / RTF / EPUB
+ * - `format: 'markdown' | 'html'` + `content` → parse markup then emit rich OOXML / ODF / RTF / EPUB / PPTX
  */
 export type WriteDocumentInput =
   | { type: 'docx'; content: string | string[] }
@@ -258,7 +258,10 @@ export type WriteDocumentInput =
       format: WriteMarkupFormat;
       content: string;
       title?: string;
-    };
+    }
+  | { type: 'pptx'; content: string | string[] }
+  | { type: 'pptx'; blocks: ContentBlock[] }
+  | { type: 'pptx'; format: WriteMarkupFormat; content: string };
 
 export interface WriteResult {
   path: string;
