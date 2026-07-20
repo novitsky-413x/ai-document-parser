@@ -72,6 +72,29 @@ describe('markdown emit escaping', () => {
     ]);
     assert.match(md, /^````/m);
   });
+
+  it('keeps snake_case underscores and numbers ordered lists', () => {
+    const md = emitMarkdownFromBlocks([
+      { type: 'list_item', level: 0, ordered: true, runs: [{ text: 'First' }] },
+      { type: 'list_item', level: 0, ordered: true, runs: [{ text: 'Second' }] },
+      { type: 'list_item', level: 0, ordered: true, runs: [{ text: 'Third' }] },
+      { type: 'paragraph', runs: [{ text: 'snake_case and file_name.txt' }] },
+      {
+        type: 'table',
+        rows: [
+          ['A', 'B', ''],
+          ['1', '2', ''],
+        ],
+      },
+    ]);
+    assert.match(md, /^1\.\s+First$/m);
+    assert.match(md, /^2\.\s+Second$/m);
+    assert.match(md, /^3\.\s+Third$/m);
+    assert.match(md, /snake_case and file_name\.txt/);
+    assert.doesNotMatch(md, /snake\\_/);
+    assert.match(md, /^\| A \| B \|$/m);
+    assert.doesNotMatch(md, /^\| A \| B \| \|$/m);
+  });
 });
 
 describe('nested lists', () => {

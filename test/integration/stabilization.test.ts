@@ -95,7 +95,7 @@ describe('ODT parse order and duplication', () => {
     assert.match(back, /- Beta/);
     assert.match(back, /\n {2}- Nested/);
     assert.match(back, /1\. One/);
-    assert.match(back, /1\. Two/);
+    assert.match(back, /2\. Two/);
   });
 });
 

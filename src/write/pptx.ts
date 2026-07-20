@@ -2,42 +2,69 @@ import JSZip from 'jszip';
 import type { CanonicalFlowBlock, CanonicalInline } from '../ir/types.js';
 import { escapeXml } from '../utils/xml.js';
 
-type SlideContent = { title: string; body: string[] };
+type SlideLine =
+  | { type: 'paragraph'; text: string }
+  | { type: 'bullet'; text: string }
+  | { type: 'numbered'; text: string }
+  | { type: 'table'; rows: string[][] };
+
+type SlideContent = { title: string; body: SlideLine[] };
 
 function runsToPlain(runs: CanonicalInline[]): string {
   return runs.map((r) => r.text).join('');
 }
 
-function blockPlainLines(block: CanonicalFlowBlock): string[] {
-  if (block.type === 'heading' || block.type === 'paragraph') {
-    const t = runsToPlain(block.runs).trim();
-    return t ? [t] : [];
-  }
-  if (block.type === 'code') {
-    return block.text
-      .replace(/\r\n/g, '\n')
-      .split('\n')
-      .map((l) => l.trimEnd())
-      .filter((l) => l.length > 0);
-  }
-  if (block.type === 'blockquote') {
-    return block.blocks.flatMap(blockPlainLines);
-  }
-  if (block.type === 'list') {
-    const lines: string[] = [];
-    for (const item of block.items) {
-      for (const sub of item) {
-        lines.push(...blockPlainLines(sub));
+function appendList(
+  list: Extract<CanonicalFlowBlock, { type: 'list' }>,
+  body: SlideLine[]
+): void {
+  for (const item of list.items) {
+    const texts: string[] = [];
+    const nested: Extract<CanonicalFlowBlock, { type: 'list' }>[] = [];
+    for (const sub of item) {
+      if (sub.type === 'paragraph' || sub.type === 'heading') {
+        const t = runsToPlain(sub.runs).trim();
+        if (t) texts.push(t);
+      } else if (sub.type === 'list') {
+        nested.push(sub);
       }
     }
-    return lines;
+    const text = texts.join(' ').trim();
+    if (text) {
+      body.push(
+        list.ordered ? { type: 'numbered', text } : { type: 'bullet', text }
+      );
+    }
+    for (const sub of nested) appendList(sub, body);
+  }
+}
+
+function appendBlockLines(block: CanonicalFlowBlock, body: SlideLine[]): void {
+  if (block.type === 'heading' || block.type === 'paragraph') {
+    const t = runsToPlain(block.runs).trim();
+    if (t) body.push({ type: 'paragraph', text: t });
+    return;
+  }
+  if (block.type === 'code') {
+    for (const line of block.text.replace(/\r\n/g, '\n').split('\n')) {
+      if (line.length) body.push({ type: 'paragraph', text: line });
+    }
+    return;
+  }
+  if (block.type === 'blockquote') {
+    for (const inner of block.blocks) appendBlockLines(inner, body);
+    return;
+  }
+  if (block.type === 'list') {
+    appendList(block, body);
+    return;
   }
   if (block.type === 'table') {
-    return block.rows.map((row) =>
-      row.map((cell) => cell.text.trim()).filter(Boolean).join(' · ')
-    );
+    body.push({
+      type: 'table',
+      rows: block.rows.map((row) => row.map((cell) => cell.text)),
+    });
   }
-  return [];
 }
 
 /** Split flow blocks into slides: `#` / `##` start a new slide. */
@@ -59,20 +86,86 @@ export function flowBlocksToSlides(blocks: CanonicalFlowBlock[]): SlideContent[]
     if (!current) {
       current = { title: 'Slide', body: [] };
     }
-    current.body.push(...blockPlainLines(block));
+    appendBlockLines(block, current.body);
   }
   flush();
   return slides.length ? slides : [{ title: 'Slide', body: [] }];
 }
 
-function slideXml(slide: SlideContent): string {
-  const paras: string[] = [];
-  paras.push(
-    `<a:p><a:r><a:rPr b="1"/><a:t>${escapeXml(slide.title || 'Slide')}</a:t></a:r></a:p>`
-  );
-  for (const line of slide.body) {
-    paras.push(`<a:p><a:r><a:t>${escapeXml(line)}</a:t></a:r></a:p>`);
+function paraXml(
+  text: string,
+  opts?: { bold?: boolean; bullet?: boolean; numbered?: boolean; num?: number }
+): string {
+  const rPr = opts?.bold ? '<a:rPr b="1"/>' : '';
+  let pPr = '';
+  if (opts?.bullet) {
+    pPr = '<a:pPr marL="342900"><a:buChar char="•"/></a:pPr>';
+  } else if (opts?.numbered) {
+    pPr = `<a:pPr marL="342900"><a:buAutoNum type="arabicPeriod" startAt="${opts.num ?? 1}"/></a:pPr>`;
   }
+  return `<a:p>${pPr}<a:r>${rPr}<a:t>${escapeXml(text)}</a:t></a:r></a:p>`;
+}
+
+function tableXml(rows: string[][]): string {
+  const colCount = Math.max(1, ...rows.map((r) => r.length));
+  const colWidth = Math.floor(8000000 / colCount);
+  const grid = Array.from(
+    { length: colCount },
+    () => `<a:gridCol w="${colWidth}"/>`
+  ).join('');
+  const trs = rows
+    .map((row) => {
+      const cells = Array.from({ length: colCount }, (_, i) => {
+        const text = row[i] ?? '';
+        return `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>${escapeXml(text)}</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc>`;
+      }).join('');
+      return `<a:tr h="370840">${cells}</a:tr>`;
+    })
+    .join('');
+  return `<a:tbl><a:tblPr/><a:tblGrid>${grid}</a:tblGrid>${trs}</a:tbl>`;
+}
+
+function graphicFrameXml(rows: string[][], id: number, y: number): string {
+  return `<p:graphicFrame>
+      <p:nvGraphicFramePr>
+        <p:cNvPr id="${id}" name="Table ${id}"/>
+        <p:cNvGraphicFramePr/>
+        <p:nvPr/>
+      </p:nvGraphicFramePr>
+      <p:xfrm>
+        <a:off x="457200" y="${y}"/>
+        <a:ext cx="8229600" cy="3000000"/>
+      </p:xfrm>
+      <a:graphic>
+        <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+          ${tableXml(rows)}
+        </a:graphicData>
+      </a:graphic>
+    </p:graphicFrame>`;
+}
+
+function slideXml(slide: SlideContent): string {
+  const paras: string[] = [paraXml(slide.title || 'Slide', { bold: true })];
+  const tables: string[][][] = [];
+  let numberAt = 1;
+  for (const line of slide.body) {
+    if (line.type === 'paragraph') {
+      paras.push(paraXml(line.text));
+      numberAt = 1;
+    } else if (line.type === 'bullet') {
+      paras.push(paraXml(line.text, { bullet: true }));
+      numberAt = 1;
+    } else if (line.type === 'numbered') {
+      paras.push(paraXml(line.text, { numbered: true, num: numberAt++ }));
+    } else if (line.type === 'table') {
+      tables.push(line.rows);
+    }
+  }
+
+  const tableShapes = tables
+    .map((rows, index) => graphicFrameXml(rows, 10 + index, 2000000 + index * 3200000))
+    .join('\n    ');
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -88,13 +181,14 @@ function slideXml(slide: SlideContent): string {
         ${paras.join('\n        ')}
       </p:txBody>
     </p:sp>
+    ${tableShapes}
   </p:spTree></p:cSld>
 </p:sld>`;
 }
 
 /**
- * Minimal first-party PPTX writer (jszip + DrawingML text).
- * Emits slides that parseDocument and editDocument surgical replace can use.
+ * Minimal first-party PPTX writer (jszip + DrawingML).
+ * Lists → bulleted/numbered paragraphs; tables → DrawingML `a:tbl`.
  */
 export async function writePptxFromBlocks(
   blocks: CanonicalFlowBlock[]

@@ -301,6 +301,27 @@ describe('clean-room surgical edit', () => {
     assert.match(parsed.text, /Привет мир/);
   });
 
+  it('RTF structured.paragraphs match surgical text across bold/italic', async () => {
+    const file = path.join(dir, 'fmt-boundary.rtf');
+    await writeDocument(file, {
+      type: 'rtf',
+      format: 'markdown',
+      content: 'Hello **bold** and *italic* world.\n',
+    });
+    const parsed = await parseDocument(file, { output: 'structured' });
+    const para = (parsed.structured as { paragraphs: string[] }).paragraphs[0];
+    assert.equal(para, 'Hello bold and italic world.');
+    const result = await editDocument(file, {
+      type: 'rtf',
+      op: 'replace',
+      oldString: para,
+      newString: 'Plain replacement',
+    });
+    assert.equal(result.changes, 1);
+    const again = await parseDocument(file, { output: 'structured' });
+    assert.match(again.text, /Plain replacement/);
+  });
+
   it('preserves unrelated raw ANSI bytes during RTF edit', async () => {
     const file = path.join(dir, 'ansi.rtf');
     writeFileSync(

@@ -37,9 +37,17 @@ function escapeMdCell(s: string): string {
     .trim();
 }
 
-/** Escape only characters that break inline markdown emphasis/links. */
+/** Escape characters that break inline markdown; keep snake_case underscores raw. */
 function escapeMdInline(s: string): string {
-  return s.replace(/([\\`*_\[\]])/g, '\\$1');
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\*/g, '\\*')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+    // `_` only when it can open/close emphasis (not inside identifiers like file_name).
+    .replace(/(^|[^A-Za-z0-9_])_(?=[A-Za-z0-9])/g, '$1\\_')
+    .replace(/([A-Za-z0-9])_(?=[^A-Za-z0-9_]|$)/g, '$1\\_');
 }
 
 /** Keep paragraph text from re-parsing as a heading / list / blockquote. */
@@ -111,9 +119,15 @@ export function runsToMarkdown(runs: InlineRun[]): string {
 
 export function emitMarkdownTable(rows: string[][]): string {
   if (!rows.length) return '';
-  const width = Math.max(...rows.map((r) => r.length), 1);
+  // Trim cells and drop trailing empties per row before measuring width.
   let norm = rows.map((r) => {
     const cells = r.map((c) => String(c ?? '').trim());
+    while (cells.length > 1 && !cells[cells.length - 1]) cells.pop();
+    return cells;
+  });
+  const width = Math.max(...norm.map((r) => r.length), 1);
+  norm = norm.map((r) => {
+    const cells = r.slice();
     while (cells.length < width) cells.push('');
     return cells.slice(0, width);
   });
@@ -143,18 +157,31 @@ export function emitMarkdownTable(rows: string[][]): string {
 export function emitMarkdownFromBlocks(blocks: ContentBlock[]): string {
   const parts: string[] = [];
   let listBuf: string[] = [];
+  /** 1-based counters for consecutive ordered items at each indent level. */
+  let olCounters: number[] = [];
 
   const flushList = () => {
     if (listBuf.length) {
       parts.push(listBuf.join('\n'));
       listBuf = [];
     }
+    olCounters = [];
   };
 
   for (const b of blocks) {
     if (b.type === 'list_item') {
-      const indent = '  '.repeat(Math.max(0, b.level));
-      const marker = b.ordered ? '1.' : '-';
+      const level = Math.max(0, b.level);
+      const indent = '  '.repeat(level);
+      let marker: string;
+      if (b.ordered) {
+        olCounters = olCounters.slice(0, level + 1);
+        while (olCounters.length <= level) olCounters.push(0);
+        olCounters[level]++;
+        marker = `${olCounters[level]}.`;
+      } else {
+        olCounters = olCounters.slice(0, level);
+        marker = '-';
+      }
       listBuf.push(`${indent}${marker} ${runsToMarkdown(b.runs)}`.trimEnd());
       continue;
     }

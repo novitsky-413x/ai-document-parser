@@ -185,8 +185,10 @@ function parseRtfInlinePlain(segment: string, codePage = 1252): CanonicalInline[
   let italic = false;
   let strike = false;
   let code = false;
+  // Consume the optional trailing space that terminates an RTF control word —
+  // that space is a delimiter, not document text (must match surgical tokenizer).
   const parts = segment.split(
-    /(\\b\b|\\b0|\\i\b|\\i0|\\strike\b|\\strike0|\\f1\b|\\f0\b)/
+    /(\\(?:b0|i0|strike0|b|i|strike|f1|f0)(?![A-Za-z]) ?)/
   );
   let buf = '';
   const flush = () => {
@@ -196,33 +198,21 @@ function parseRtfInlinePlain(segment: string, codePage = 1252): CanonicalInline[
     if (text) runs.push({ text, bold, italic, strike, ...(code ? { code: true } : {}) });
   };
   for (const part of parts) {
-    if (part === '\\b') {
+    const ctrl = /^\\(b0|i0|strike0|b|i|strike|f1|f0) ?$/.exec(part);
+    if (ctrl) {
       flush();
-      bold = true;
-    } else if (part === '\\b0') {
-      flush();
-      bold = false;
-    } else if (part === '\\i') {
-      flush();
-      italic = true;
-    } else if (part === '\\i0') {
-      flush();
-      italic = false;
-    } else if (part === '\\strike') {
-      flush();
-      strike = true;
-    } else if (part === '\\strike0') {
-      flush();
-      strike = false;
-    } else if (part === '\\f1') {
-      flush();
-      code = true;
-    } else if (part === '\\f0') {
-      flush();
-      code = false;
-    } else {
-      buf += part;
+      const word = ctrl[1];
+      if (word === 'b') bold = true;
+      else if (word === 'b0') bold = false;
+      else if (word === 'i') italic = true;
+      else if (word === 'i0') italic = false;
+      else if (word === 'strike') strike = true;
+      else if (word === 'strike0') strike = false;
+      else if (word === 'f1') code = true;
+      else if (word === 'f0') code = false;
+      continue;
     }
+    buf += part;
   }
   flush();
   return runs.filter((r) => r.text);

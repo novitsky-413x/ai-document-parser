@@ -94,7 +94,7 @@ await writeDocument('deck.pptx', {
 });
 ```
 
-`#` / `##` headings start a new slide; following blocks become body paragraphs. Same `plain` / `blocks` / `format+content` modes as other rich writers (`writeModes` on capabilities).
+`#` / `##` headings start a new slide; following blocks become body paragraphs. Lists emit bulleted/numbered DrawingML paragraphs; tables emit real `a:tbl` (round-trip as `type:'table'` on parse). Same `plain` / `blocks` / `format+content` modes as other rich writers (`writeModes` on capabilities).
 
 - Surgical text replace preserves slides/layout/media:
 

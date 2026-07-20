@@ -294,4 +294,32 @@ Paragraph with **bold**.
     assert.match(again.text, /Обновлённый слайд/);
     assert.doesNotMatch(again.text, /Первый слайд/);
   });
+
+  it('pptx markdown write keeps tables and list item text', async () => {
+    const file = path.join(dir, 'structured.pptx');
+    await writeDocument(file, {
+      type: 'pptx',
+      format: 'markdown',
+      content: '# Title\n\n- item one\n- item two\n\n| A | B |\n|---|---|\n| 1 | 2 |\n',
+    });
+    const parsed = await parseDocument(file, { output: 'structured' });
+    const structured = parsed.structured as {
+      slides: string[][];
+      blocks: ContentBlock[];
+    };
+    assert.ok(structured.slides[0].includes('item one'));
+    assert.ok(structured.slides[0].includes('item two'));
+    assert.equal(
+      structured.slides[0].some((t) => t.includes('·')),
+      false,
+      'table cells must not be flattened with ·'
+    );
+    assert.ok(structured.blocks.some((b) => b.type === 'table'));
+    const table = structured.blocks.find((b) => b.type === 'table') as Extract<
+      ContentBlock,
+      { type: 'table' }
+    >;
+    assert.deepEqual(table.rows[0], ['A', 'B']);
+    assert.deepEqual(table.rows[1], ['1', '2']);
+  });
 });
