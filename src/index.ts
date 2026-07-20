@@ -13,8 +13,20 @@ export {
   readDocxStructured,
   updateSpreadsheetCells,
   readSpreadsheetStructured,
+  editPptxText,
+  editOdtText,
+  editEpubText,
+  editRtfText,
+  editFlowDocument,
 } from './edit/index.js';
-export { writeDocument, writeDocx, writePdf, writeSpreadsheet } from './write/index.js';
+export {
+  writeDocument,
+  writeDocx,
+  writePdf,
+  writeSpreadsheet,
+  writeDocxFromBlocks,
+  writeOdtFromBlocks,
+} from './write/index.js';
 export { DocumentError } from './utils/errors.js';
 export { getCapabilities } from './adapters/registry.js';
 
@@ -34,10 +46,25 @@ export type {
   ContentBlock,
   InlineRun,
   EditDocumentOp,
+  EditDocxOp,
+  EditSpreadsheetOp,
+  EditPptxOp,
+  EditOdtOp,
+  EditEpubOp,
+  EditRtfOp,
+  EditFlowOp,
   EditResult,
   WriteDocumentInput,
+  WriteMode,
+  WriteMarkupFormat,
   WriteResult,
   DocumentErrorCode,
   DocumentAst,
 } from './types.js';
-export type { AdapterCapabilities, ConvertTarget } from './ir/types.js';
+export type {
+  AdapterCapabilities,
+  ConvertTarget,
+  WriteCapabilityMode,
+  EditCapabilityMode,
+  EditCapabilityOperation,
+} from './ir/types.js';

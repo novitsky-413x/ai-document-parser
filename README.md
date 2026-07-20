@@ -39,10 +39,17 @@ await editDocument('budget.xlsx', {
     updates: [{ sheet: 'Q1', cell: 'B2', value: 1500 }],
 });
 
-// Create
+// Create — plain paragraphs (markdown markers are literal text)
 await writeDocument('memo.docx', {
     type: 'docx',
     content: 'Paragraph one\nParagraph two',
+});
+
+// Create — rich DOCX from markdown (lists, tables, headings, emphasis)
+await writeDocument('report.docx', {
+    type: 'docx',
+    format: 'markdown',
+    content: '# Title\n\n- item\n\n| A | B |\n|---|---|\n| 1 | 2 |\n',
 });
 
 await writeDocument('out.pdf', {
@@ -55,33 +62,38 @@ await writeDocument('out.pdf', {
 ## Agent workflow
 
 1. `parseDocument(path, { output: 'structured' })` — paragraphs / sheet grids / pptx slides
-2. `editDocument(...)` — targeted changes (**docx** / **xlsx** only)
-3. Re-read structured output to verify
+2. Inspect `getCapabilities(format).editModes` and choose `surgical`, `patchCells`, or explicit `rewrite`
+3. `editDocument(...)` — targeted or structured changes
+4. Re-read structured output to verify
 
-For read-only formats (pptx, pdf, md, …) prefer `convertDocument` → `md` / `text` / `chunks`.
+PDF and legacy formats remain read/convert-only.
 
 See [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
 
 ## Format matrix (v0.2)
 
-| Format          | Parse     | Convert                                   | Edit           | Write                |
-| --------------- | --------- | ----------------------------------------- | -------------- | -------------------- |
-| docx            | yes       | md/html/text/chunks/docx/odt/rtf/epub     | replace/append | yes                  |
-| xlsx / xls      | yes       | csv/md/html/text/chunks                   | cell patch     | yes                  |
-| pptx            | yes       | md/html/text/chunks                       | —              | —                    |
-| pdf             | text      | md/html/text/chunks                       | —              | plain text           |
-| md / html / csv | yes       | md/html/text/csv/chunks/docx/odt/rtf/epub | —              | —                    |
-| legacy .doc     | heuristic | md/html/text/chunks/docx/odt/rtf/epub     | —              | via convertDocToDocx |
-| odt             | yes       | md/html/text/chunks/docx/odt/rtf/epub     | —              | yes                  |
-| ods / odp       | yes       | csv (ods) / md/html/text/chunks           | —              | —                    |
-| rtf / epub      | yes       | md/html/text/chunks/docx/odt/rtf/epub     | —              | yes                  |
-| legacy .ppt     | —         | —                                         | —              | —                    |
+| Format          | Parse     | Convert                                   | Edit operation (fidelity)      | Write                |
+| --------------- | --------- | ----------------------------------------- | ------------------------------ | -------------------- |
+| docx            | yes       | md/html/text/chunks/docx/odt/rtf/epub     | surgical replace/append; rewrite | plain / blocks / md  |
+| xlsx / xls      | yes       | csv/md/html/text/chunks                   | patchCells (surgical)          | yes                  |
+| pptx            | yes       | md/html/text/chunks                       | surgical replace              | —                    |
+| pdf             | text      | md/html/text/chunks                       | —                              | plain text           |
+| md / html       | yes       | md/html/text/csv/chunks/docx/odt/rtf/epub | rewrite                        | via flow rewrite     |
+| csv             | yes       | md/html/text/csv/chunks/docx/odt/rtf/epub | —                              | —                    |
+| legacy .doc     | heuristic | md/html/text/chunks/docx/odt/rtf/epub     | —                              | via convertDocToDocx |
+| odt             | yes       | md/html/text/chunks/docx/odt/rtf/epub     | surgical replace; rewrite     | plain / blocks / md  |
+| ods             | yes       | csv/md/html/text/chunks                   | patchCells (rewrite)           | —                    |
+| odp             | yes       | md/html/text/chunks                       | —                              | —                    |
+| rtf / epub      | yes       | md/html/text/chunks/docx/odt/rtf/epub     | surgical replace; rewrite     | plain / blocks / md  |
+| legacy .ppt     | —         | —                                         | —                              | —                    |
 
 Notes:
 
 - Convert → **md/html** preserves structure for DOCX (headings, tables, bold/italic/strike, ordered lists, hyperlinks, footnotes; images omitted), HTML, CSV (GFM table), PPTX slides, XLSX sheets. MD→md is passthrough. PDF / legacy `.doc` stay plain text.
 - Convert target `pdf` is **not** supported (create PDF with `writeDocument`).
 - **DOCX** and **PPTX** cannot convert **to csv** (use a spreadsheet source). Multi-sheet workbooks export the first sheet to CSV unless `options.sheet` is passed.
+- **Write** for docx/odt/rtf/epub: `{ content }` is plain paragraphs only; use `{ format: 'markdown', content }` or `{ blocks }` for headings/lists/tables. See `writeModes` on `getCapabilities()`.
+- **Edit fidelity:** `EditResult.mode` is `surgical` when package markup is patched in place and `rewrite` when content is regenerated. ODS `patchCells` currently reports `rewrite`.
 - `getCapabilities()` (CLI: `capabilities`) reports the exact per-format matrix.
 
 ## Subpath exports

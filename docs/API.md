@@ -78,7 +78,8 @@ Extensionless paths and mislabeled binaries are detected from magic bytes / ZIP 
 
 ## `editDocument(path, op)`
 
-Filesystem path only (in-place).
+Filesystem path only. `EditResult.mode` reports whether the original package
+was patched (`surgical`) or regenerated (`rewrite`).
 
 ```ts
 // DOCX replace
@@ -87,8 +88,37 @@ Filesystem path only (in-place).
 // DOCX append
 { type: 'docx', op: 'append', paragraphs: string[] }
 
-// Spreadsheet patch
+// XLSX / XLS / ODS cell patch (ODS reports mode:'rewrite')
 { type: 'spreadsheet', op: 'patchCells', updates: [{ sheet?, cell, value }] }
+
+// PPTX DrawingML text replace; slide is one-based
+{
+  type: 'pptx',
+  op: 'replace',
+  oldString,
+  newString,
+  replaceAll?: boolean,
+  slide?: number,
+  includeNotes?: boolean
+}
+
+// ODT / RTF text replace
+{ type: 'odt' | 'rtf', op: 'replace', oldString, newString, replaceAll?: boolean }
+
+// EPUB spine XHTML replace; chapter is one-based or a resolved spine path
+{
+  type: 'epub',
+  op: 'replace',
+  oldString,
+  newString,
+  replaceAll?: boolean,
+  chapter?: number | string
+}
+
+// Explicit regeneration for docx/odt/rtf/epub/md/html
+{ type: 'flow', op: 'rewrite', format: 'markdown' | 'html', content: string }
+{ type: 'flow', op: 'rewrite', blocks: ContentBlock[] }
+{ type: 'flow', op: 'replace', oldString, newString, replaceAll?: boolean }
 ```
 
 Throws `DocumentError` with codes:
@@ -97,16 +127,49 @@ Throws `DocumentError` with codes:
 - `MULTIPLE_MATCHES`
 - `INVALID_ARGUMENT`
 
-There is **no** surgical edit for pptx / pdf / md / html / csv.
+Surgical replace is bounded by semantic containers: it does not match across
+paragraphs, slides, EPUB chapters, or RTF destinations. PPTX charts/SmartArt
+and arbitrary existing PDF page text are not editable.
+
+`getCapabilities(format)` exposes:
+
+- `editModes`: `surgical` and/or `rewrite`;
+- `editOps`: concrete operation names (`replace`, `append`, `patchCells`,
+  `rewrite`) for agent tool schemas.
+
+`patchCells` is an operation, not a fidelity claim: XLSX/XLS advertise
+`editModes:['surgical']`; ODS advertises `editModes:['rewrite']`.
 
 ## `writeDocument(path, input)`
 
+Create a new file from scratch. For **docx / odt / rtf / epub**, pick **exactly one** mode:
+
+| Mode | Input shape | Behavior |
+|------|-------------|----------|
+| **plain** | `{ type, content: string \| string[] }` | One paragraph per line / array entry. Markdown markers (`- item`, `\| a \| b \|`) are **literal text**, not lists/tables. |
+| **blocks** | `{ type, blocks: ContentBlock[] }` | Emit real headings, lists, tables, emphasis, links, code. |
+| **markup** | `{ type, format: 'markdown' \| 'html', content: string }` | Parse MD/HTML → same structured emit as convert. |
+
 ```ts
-{ type: 'docx', content: string | string[] }
+// Plain paragraphs only
+{ type: 'docx', content: 'Paragraph one\nParagraph two' }
+
+// Preferred for LLM agents — rich DOCX/ODT/RTF/EPUB
+{ type: 'docx', format: 'markdown', content: '# Title\n\n- item\n\n| A | B |\n|---|---|\n| 1 | 2 |\n' }
+
+// Typed hosts
+{ type: 'docx', blocks: [{ type: 'heading', level: 1, runs: [{ text: 'Title' }] }] }
+
 { type: 'xlsx' | 'xls', sheets: Record<string, cell[][]> }
-{ type: 'pdf', content: string, title?: string }
-{ type: 'odt' | 'rtf' | 'epub', content: string | string[], title?: string }
+{ type: 'pdf', content: string, title?: string }  // plain text PDF
+{ type: 'odt' | 'rtf' | 'epub', /* same plain | blocks | format+content as docx */, title?: string }
 ```
+
+`WriteResult` includes `summary.mode` (`'plain' | 'blocks' | 'markdown' | 'html'`) and optional `warnings` (e.g. `PLAIN_WRITE_IGNORED_MARKUP` when plain `content` looks like markdown structure).
+
+`getCapabilities()` sets `writeModes: ['plain','blocks','markdown','html']` for docx/odt/rtf/epub (spreadsheets/PDF: `['plain']` only).
+
+Advanced: `writeDocxFromBlocks` / `writeOdtFromBlocks` are exported for hosts that already hold canonical flow blocks.
 
 ## `DocumentError`
 

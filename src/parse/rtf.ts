@@ -12,7 +12,7 @@ const TABLE_WIDTH_TWIPS = 9000;
 const LIST_INDENT = 720;
 
 /** Decode a single ANSI byte using a Windows code page when available. */
-function decodeAnsiByte(byte: number, codePage: number): string {
+export function decodeAnsiByte(byte: number, codePage: number): string {
   try {
     const label =
       codePage === 1251
@@ -537,7 +537,7 @@ function runsToPlain(runs: CanonicalInline[]): string {
   return runs.map((r) => r.text).join('');
 }
 
-function escapeRtf(s: string): string {
+export function escapeRtf(s: string): string {
   const out: string[] = [];
   const normalized = s.replace(/\r\n/g, '\n');
   for (const ch of normalized) {

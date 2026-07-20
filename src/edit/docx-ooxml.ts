@@ -5,6 +5,10 @@ import { loadZipBuffer, readFileLimited } from '../utils/zip.js';
 import { writeFileAtomic } from '../utils/paths.js';
 import type { DocxStructured } from '../types.js';
 import { docxStructuredFromZip } from '../parse/docx-blocks.js';
+import {
+  replaceVisibleTokenText,
+  type VisibleTextToken,
+} from './text-selection.js';
 
 const DOC_PARTS: Array<string | RegExp> = [
   'word/document.xml',
@@ -26,10 +30,8 @@ async function loadZip(filePath: string): Promise<JSZip> {
 }
 
 /** One <w:t> element in a paragraph: its span within the paragraph XML plus decoded text. */
-type TextToken = { start: number; end: number; decoded: string };
-
-function extractTextTokens(paraXml: string): TextToken[] {
-  const tokens: TextToken[] = [];
+function extractTextTokens(paraXml: string): VisibleTextToken[] {
+  const tokens: VisibleTextToken[] = [];
   const wtRe = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:t(?:\s[^>]*)?\/>/g;
   let m: RegExpExecArray | null;
   while ((m = wtRe.exec(paraXml)) !== null) {
@@ -40,33 +42,6 @@ function extractTextTokens(paraXml: string): TextToken[] {
     });
   }
   return tokens;
-}
-
-/**
- * Apply one replacement over decoded token texts. The insert lands only in the
- * first overlapping token; the matched span is cleared from the rest.
- */
-function applyReplacement(
-  texts: string[],
-  start: number,
-  end: number,
-  insert: string
-): string[] {
-  let pos = 0;
-  let inserted = false;
-  return texts.map((decoded) => {
-    const tokStart = pos;
-    const tokEnd = pos + decoded.length;
-    pos = tokEnd;
-    if (tokEnd <= start || tokStart >= end) return decoded;
-    const localStart = Math.max(0, start - tokStart);
-    const localEnd = Math.min(decoded.length, end - tokStart);
-    const before = decoded.slice(0, localStart);
-    const after = decoded.slice(localEnd);
-    const middle = inserted ? '' : insert;
-    inserted = true;
-    return before + middle + after;
-  });
 }
 
 function renderTextToken(decoded: string): string {
@@ -85,26 +60,12 @@ function replaceInParagraphXml(
 
   const combined = tokens.map((t) => t.decoded).join('');
   if (!combined.includes(oldString)) return { xml: paraXml, count: 0 };
-
-  let texts = tokens.map((t) => t.decoded);
-  let count = 0;
-  let searchFrom = 0;
-
-  if (replaceAll) {
-    while (true) {
-      const text = texts.join('');
-      const idx = text.indexOf(oldString, searchFrom);
-      if (idx === -1) break;
-      texts = applyReplacement(texts, idx, idx + oldString.length, newString);
-      count++;
-      searchFrom = idx + newString.length;
-    }
-  } else {
-    const idx = combined.indexOf(oldString);
-    if (idx === -1) return { xml: paraXml, count: 0 };
-    texts = applyReplacement(texts, idx, idx + oldString.length, newString);
-    count = 1;
-  }
+  const { texts, count } = replaceVisibleTokenText(
+    tokens,
+    oldString,
+    newString,
+    replaceAll
+  );
 
   // Splice changed <w:t> elements back in place (right to left keeps offsets
   // valid) so hyperlinks, fields, bookmarks and run properties are untouched.
@@ -119,8 +80,7 @@ function replaceInParagraphXml(
 function replaceInDocumentXml(
   xml: string,
   oldString: string,
-  newString: string,
-  replaceAll: boolean
+  newString: string
 ): { xml: string; count: number } {
   const paraRegex = /<w:p[\s\S]*?<\/w:p>/g;
   let total = 0;
@@ -129,7 +89,8 @@ function replaceInDocumentXml(
       para,
       oldString,
       newString,
-      replaceAll
+      // Count all matches before editDocx decides whether replaceAll is needed.
+      true
     );
     total += count;
     return next;
@@ -156,8 +117,7 @@ export async function editDocx(
     const { xml: next, count } = replaceInDocumentXml(
       xml,
       oldString,
-      newString,
-      replaceAll
+      newString
     );
     total += count;
     zip.file(name, next);

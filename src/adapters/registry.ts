@@ -36,20 +36,59 @@ const KIND_MAP: Record<string, AdapterCapabilities['kind']> = {
   odp: 'presentation',
 };
 
-const EDIT_FORMATS = new Set(['docx', 'xlsx', 'xls']);
 const WRITE_FORMATS = new Set(['docx', 'xlsx', 'xls', 'pdf', 'odt', 'rtf', 'epub']);
+/** Rich create (blocks / markdown / html) for flow binary writers. */
+const RICH_WRITE_FORMATS = new Set(['docx', 'odt', 'rtf', 'epub']);
+const EDIT_CAPABILITIES: Record<
+  string,
+  Pick<AdapterCapabilities, 'editModes' | 'editOps'>
+> = {
+  docx: {
+    editModes: ['surgical', 'rewrite'],
+    editOps: ['replace', 'append', 'rewrite'],
+  },
+  xlsx: { editModes: ['surgical'], editOps: ['patchCells'] },
+  xls: { editModes: ['surgical'], editOps: ['patchCells'] },
+  ods: { editModes: ['rewrite'], editOps: ['patchCells'] },
+  pptx: { editModes: ['surgical'], editOps: ['replace'] },
+  odt: {
+    editModes: ['surgical', 'rewrite'],
+    editOps: ['replace', 'rewrite'],
+  },
+  rtf: {
+    editModes: ['surgical', 'rewrite'],
+    editOps: ['replace', 'rewrite'],
+  },
+  epub: {
+    editModes: ['surgical', 'rewrite'],
+    editOps: ['replace', 'rewrite'],
+  },
+  md: { editModes: ['rewrite'], editOps: ['replace', 'rewrite'] },
+  html: { editModes: ['rewrite'], editOps: ['replace', 'rewrite'] },
+};
 
 export function getCapabilities(filter?: string): AdapterCapabilities[] {
   const formats = [...CORE_PARSE_FORMATS];
   const list = filter ? formats.filter((f) => f === filter) : formats;
-  return list.map((format) => ({
-    format,
-    kind: KIND_MAP[format] ?? 'flow',
-    parse: true,
-    convertTo: CONVERT_MATRIX[format] ?? ['text', 'chunks'],
-    edit: EDIT_FORMATS.has(format),
-    write: WRITE_FORMATS.has(format),
-  }));
+  return list.map((format) => {
+    const write = WRITE_FORMATS.has(format);
+    const writeModes = !write
+      ? undefined
+      : RICH_WRITE_FORMATS.has(format)
+        ? (['plain', 'blocks', 'markdown', 'html'] as const)
+        : (['plain'] as const);
+    const editCapabilities = EDIT_CAPABILITIES[format];
+    return {
+      format,
+      kind: KIND_MAP[format] ?? 'flow',
+      parse: true,
+      convertTo: CONVERT_MATRIX[format] ?? ['text', 'chunks'],
+      edit: editCapabilities !== undefined,
+      ...(editCapabilities ?? {}),
+      write,
+      ...(writeModes ? { writeModes: [...writeModes] } : {}),
+    };
+  });
 }
 
 export function allowedConvertTargets(sourceFormat: string): ConvertTarget[] {

@@ -73,7 +73,7 @@ export interface DocxStructured {
 }
 
 export interface SpreadsheetStructured {
-  format: 'xlsx' | 'xls';
+  format: 'xlsx' | 'xls' | 'ods';
   sheets: Record<string, (string | number | boolean | null)[][]>;
 }
 
@@ -142,19 +142,99 @@ export type EditSpreadsheetOp = {
   }>;
 };
 
-export type EditDocumentOp = EditDocxOp | EditSpreadsheetOp;
+export type EditPptxOp = {
+  type: 'pptx';
+  op: 'replace';
+  oldString: string;
+  newString: string;
+  replaceAll?: boolean;
+  /** One-based slide number. Omit to search all slides. */
+  slide?: number;
+  /** Also search notes slide parts. Default: false. */
+  includeNotes?: boolean;
+};
+
+export type EditOdtOp = {
+  type: 'odt';
+  op: 'replace';
+  oldString: string;
+  newString: string;
+  replaceAll?: boolean;
+};
+
+export type EditEpubOp = {
+  type: 'epub';
+  op: 'replace';
+  oldString: string;
+  newString: string;
+  replaceAll?: boolean;
+  /** One-based spine index or resolved XHTML part path. */
+  chapter?: number | string;
+};
+
+export type EditRtfOp = {
+  type: 'rtf';
+  op: 'replace';
+  oldString: string;
+  newString: string;
+  replaceAll?: boolean;
+};
+
+export type EditFlowOp =
+  | {
+      type: 'flow';
+      op: 'rewrite';
+      format: WriteMarkupFormat;
+      content: string;
+    }
+  | {
+      type: 'flow';
+      op: 'rewrite';
+      blocks: ContentBlock[];
+    }
+  | {
+      type: 'flow';
+      op: 'replace';
+      oldString: string;
+      newString: string;
+      replaceAll?: boolean;
+    };
+
+export type EditDocumentOp =
+  | EditDocxOp
+  | EditSpreadsheetOp
+  | EditPptxOp
+  | EditOdtOp
+  | EditEpubOp
+  | EditRtfOp
+  | EditFlowOp;
 
 export interface EditResult {
   path: string;
   message: string;
   changes: number;
+  /** Whether the original package was patched or fully regenerated. */
+  mode?: 'surgical' | 'rewrite';
 }
 
+/** How `writeDocument` interpreted the payload (for agents / hosts). */
+export type WriteMode = 'plain' | 'blocks' | 'markdown' | 'html';
+
+/** Markup formats accepted on rich write (`format` + `content`). */
+export type WriteMarkupFormat = 'markdown' | 'html';
+
+/**
+ * Create-from-scratch input.
+ *
+ * For flow formats (docx / odt / rtf / epub), exactly one of:
+ * - `content` only → **plain** paragraphs (one line / array entry = one paragraph; MD markers are literal)
+ * - `blocks` → structured {@link ContentBlock}s
+ * - `format: 'markdown' | 'html'` + `content` → parse markup then emit rich OOXML / ODF / RTF / EPUB
+ */
 export type WriteDocumentInput =
-  | {
-      type: 'docx';
-      content: string | string[];
-    }
+  | { type: 'docx'; content: string | string[] }
+  | { type: 'docx'; blocks: ContentBlock[] }
+  | { type: 'docx'; format: WriteMarkupFormat; content: string }
   | {
       type: 'xlsx' | 'xls';
       sheets: Record<string, (string | number | boolean | null)[][]>;
@@ -164,23 +244,31 @@ export type WriteDocumentInput =
       content: string;
       title?: string;
     }
-  | {
-      type: 'odt';
-      content: string | string[];
-    }
-  | {
-      type: 'rtf';
-      content: string | string[];
-    }
+  | { type: 'odt'; content: string | string[] }
+  | { type: 'odt'; blocks: ContentBlock[] }
+  | { type: 'odt'; format: WriteMarkupFormat; content: string }
+  | { type: 'rtf'; content: string | string[] }
+  | { type: 'rtf'; blocks: ContentBlock[] }
+  | { type: 'rtf'; format: WriteMarkupFormat; content: string }
+  | { type: 'epub'; content: string | string[]; title?: string }
+  | { type: 'epub'; blocks: ContentBlock[]; title?: string }
   | {
       type: 'epub';
-      content: string | string[];
+      format: WriteMarkupFormat;
+      content: string;
       title?: string;
     };
 
 export interface WriteResult {
   path: string;
   message: string;
+  /** What was actually emitted (for agents / hosts). */
+  summary?: {
+    mode: WriteMode;
+    blockCounts?: Partial<Record<ContentBlock['type'], number>>;
+    paragraphCount?: number;
+  };
+  warnings?: DocumentWarning[];
 }
 
 export type DocumentAst =

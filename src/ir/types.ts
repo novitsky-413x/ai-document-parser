@@ -97,11 +97,30 @@ export type ConvertTarget =
   | 'odp'
   | 'pptx';
 
+/** Modes accepted by `writeDocument` for formats that support create-from-scratch. */
+export type WriteCapabilityMode = 'plain' | 'blocks' | 'markdown' | 'html';
+export type EditCapabilityMode = 'surgical' | 'rewrite';
+export type EditCapabilityOperation =
+  | 'replace'
+  | 'append'
+  | 'rewrite'
+  | 'patchCells';
+
 export type AdapterCapabilities = {
   format: string;
   kind: DocumentKind;
   parse: boolean;
   convertTo: ConvertTarget[];
   edit: boolean;
+  /** Fidelity / implementation modes available through `editDocument`. */
+  editModes?: EditCapabilityMode[];
+  /** Concrete operation names suitable for agent tool-schema generation. */
+  editOps?: EditCapabilityOperation[];
   write: boolean;
+  /**
+   * When `write` is true, which create modes are available.
+   * Flow formats that emit structure: plain + blocks + markdown + html.
+   * Spreadsheets / PDF: plain only (grid / text).
+   */
+  writeModes?: WriteCapabilityMode[];
 };

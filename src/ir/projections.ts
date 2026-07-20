@@ -104,7 +104,7 @@ export function workbookToSpreadsheetStructured(
   for (const s of doc.sheets) {
     sheets[s.name] = s.rows;
   }
-  return { format: doc.format as 'xlsx' | 'xls', sheets };
+  return { format: doc.format as 'xlsx' | 'xls' | 'ods', sheets };
 }
 
 export function presentationToPptxStructured(

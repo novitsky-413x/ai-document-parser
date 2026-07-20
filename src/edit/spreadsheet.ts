@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as XLSX from '@e965/xlsx';
+import JSZip from 'jszip';
 import { DocumentError } from '../utils/errors.js';
 import { assertMaxSpreadsheetCells } from '../utils/limits.js';
 import { ensureParentDir, writeFileAtomic } from '../utils/paths.js';
 import { csvEscapeCell } from '../utils/text.js';
+import { decodeXmlEntities, escapeXml } from '../utils/xml.js';
 import type { SpreadsheetStructured } from '../types.js';
 
 export type SheetGrid = Record<string, (string | number | boolean | null)[][]>;
@@ -16,12 +18,18 @@ export type CellUpdate = {
   value: string | number | boolean | null;
 };
 
-function bookTypeFor(filePath: string): 'xlsx' | 'biff8' {
-  return path.extname(filePath).toLowerCase() === '.xls' ? 'biff8' : 'xlsx';
+function bookTypeFor(filePath: string): 'xlsx' | 'biff8' | 'ods' {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.xls') return 'biff8';
+  if (ext === '.ods') return 'ods';
+  return 'xlsx';
 }
 
-function formatFor(filePath: string): 'xlsx' | 'xls' {
-  return path.extname(filePath).toLowerCase() === '.xls' ? 'xls' : 'xlsx';
+function formatFor(filePath: string): 'xlsx' | 'xls' | 'ods' {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.xls') return 'xls';
+  if (ext === '.ods') return 'ods';
+  return 'xlsx';
 }
 
 function coerceValue(v: unknown): string | number | boolean | null {
@@ -42,9 +50,214 @@ function cellObject(value: string | number | boolean | null): XLSX.CellObject {
   return { t: 's', v: value };
 }
 
-async function writeWorkbook(filePath: string, wb: XLSX.WorkBook): Promise<void> {
+type OdsFormulaUpdate = {
+  sheet: string;
+  address: string;
+  formula: string;
+};
+
+function toOpenFormula(formula: string): string {
+  if (formula.includes('!')) {
+    throw new DocumentError(
+      'INVALID_ARGUMENT',
+      'ODS formula updates with cross-sheet references are not supported'
+    );
+  }
+  const convertOutsideString = (segment: string): string => {
+    const ranges: string[] = [];
+    let converted = segment.replace(
+      /(\$?[A-Za-z]{1,3}\$?\d+):(\$?[A-Za-z]{1,3}\$?\d+)/g,
+      (_match, from: string, to: string) => {
+        const marker = `__ADP_RANGE_${ranges.length}__`;
+        ranges.push(`[.${from.toUpperCase()}:.${to.toUpperCase()}]`);
+        return marker;
+      }
+    );
+    converted = converted.replace(
+      /\b(\$?[A-Za-z]{1,3}\$?\d+)\b/g,
+      (match, address: string, offset: number, source: string) =>
+        source[offset + match.length] === '('
+          ? match
+          : `[.${address.toUpperCase()}]`
+    );
+    ranges.forEach((range, index) => {
+      converted = converted.replace(`__ADP_RANGE_${index}__`, range);
+    });
+    return converted;
+  };
+
+  return formula
+    .split(/("(?:[^"]|"")*")/)
+    .map((part) =>
+      part.startsWith('"') && part.endsWith('"')
+        ? part
+        : convertOutsideString(part)
+    )
+    .join('');
+}
+
+function patchOdsCellFormula(
+  contentXml: string,
+  update: OdsFormulaUpdate
+): string {
+  const repeatCount = (element: string, attribute: string): number => {
+    const value = new RegExp(`\\b${attribute}="(\\d+)"`).exec(element)?.[1];
+    return value ? Math.max(1, Number(value)) : 1;
+  };
+  const withRepeat = (
+    element: string,
+    attribute: string,
+    count: number
+  ): string => {
+    const expression = new RegExp(`\\s+${attribute}="\\d+"`);
+    if (count <= 1) return element.replace(expression, '');
+    if (expression.test(element)) {
+      return element.replace(expression, ` ${attribute}="${count}"`);
+    }
+    return element.replace(/\/?>/, (end) => ` ${attribute}="${count}"${end}`);
+  };
+  const formulaCell = (cellXml: string): string => {
+    if (/^<table:covered-table-cell\b/.test(cellXml)) {
+      throw new DocumentError(
+        'INVALID_ARGUMENT',
+        `Cannot assign formula to covered merged cell ${update.sheet}!${update.address}`
+      );
+    }
+    const open = /^<table:table-cell\b[^>]*\/?>/.exec(cellXml)?.[0];
+    if (!open) {
+      throw new DocumentError(
+        'WRITE_FAILED',
+        `Could not locate ODS cell ${update.sheet}!${update.address}`
+      );
+    }
+    const retained = open
+      .replace(/\/?>$/, '')
+      .replace(/\s+table:number-columns-repeated="\d+"/g, '')
+      .replace(
+        /\s+(?:table:formula|office:string-value|office:value-type|office:value|calcext:value-type)="[^"]*"/g,
+        ''
+      );
+    const formula = escapeXml(toOpenFormula(update.formula));
+    return `${retained} table:formula="of:=${formula}" office:value-type="float" office:value="0"><text:p>0</text:p></table:table-cell>`;
+  };
+  const patchRow = (rowXml: string, targetColumn: number): string => {
+    const cells = [
+      ...rowXml.matchAll(
+        /<table:(?:table-|covered-table-)?cell\b[^>]*\/>|<table:(?:table-|covered-table-)?cell\b[\s\S]*?<\/table:(?:table-)?cell>/g
+      ),
+    ];
+    let logicalColumn = 0;
+    for (const cell of cells) {
+      const repeat = repeatCount(cell[0], 'table:number-columns-repeated');
+      if (
+        targetColumn < logicalColumn ||
+        targetColumn >= logicalColumn + repeat
+      ) {
+        logicalColumn += repeat;
+        continue;
+      }
+      const before = targetColumn - logicalColumn;
+      const after = repeat - before - 1;
+      const pieces: string[] = [];
+      if (before > 0) {
+        pieces.push(
+          withRepeat(cell[0], 'table:number-columns-repeated', before)
+        );
+      }
+      pieces.push(
+        formulaCell(
+          withRepeat(cell[0], 'table:number-columns-repeated', 1)
+        )
+      );
+      if (after > 0) {
+        pieces.push(
+          withRepeat(cell[0], 'table:number-columns-repeated', after)
+        );
+      }
+      const at = cell.index ?? 0;
+      return (
+        rowXml.slice(0, at) +
+        pieces.join('') +
+        rowXml.slice(at + cell[0].length)
+      );
+    }
+    throw new DocumentError(
+      'WRITE_FAILED',
+      `Could not locate ODS column for ${update.sheet}!${update.address}`
+    );
+  };
+
+  const sheetRegex =
+    /<table:table\b[^>]*table:name="([^"]*)"[\s\S]*?<\/table:table>/g;
+  let sheetMatch: RegExpExecArray | null;
+  while ((sheetMatch = sheetRegex.exec(contentXml)) !== null) {
+    if (decodeXmlEntities(sheetMatch[1]) !== update.sheet) continue;
+    const sheetXml = sheetMatch[0];
+    const point = XLSX.utils.decode_cell(update.address);
+    const rows = [
+      ...sheetXml.matchAll(
+        /<table:table-row\b[^>]*\/>|<table:table-row\b[\s\S]*?<\/table:table-row>/g
+      ),
+    ];
+    let logicalRow = 0;
+    for (const row of rows) {
+      const repeat = repeatCount(row[0], 'table:number-rows-repeated');
+      if (point.r < logicalRow || point.r >= logicalRow + repeat) {
+        logicalRow += repeat;
+        continue;
+      }
+      const before = point.r - logicalRow;
+      const after = repeat - before - 1;
+      const pieces: string[] = [];
+      if (before > 0) {
+        pieces.push(withRepeat(row[0], 'table:number-rows-repeated', before));
+      }
+      const oneRow = withRepeat(row[0], 'table:number-rows-repeated', 1);
+      pieces.push(patchRow(oneRow, point.c));
+      if (after > 0) {
+        pieces.push(withRepeat(row[0], 'table:number-rows-repeated', after));
+      }
+      const rowAt = row.index ?? 0;
+      const patchedSheet =
+        sheetXml.slice(0, rowAt) +
+        pieces.join('') +
+        sheetXml.slice(rowAt + row[0].length);
+      return (
+        contentXml.slice(0, sheetMatch.index) +
+        patchedSheet +
+        contentXml.slice(sheetMatch.index + sheetXml.length)
+      );
+    }
+    break;
+  }
+  throw new DocumentError(
+    'WRITE_FAILED',
+    `Could not encode ODS formula at ${update.sheet}!${update.address}`
+  );
+}
+
+async function patchOdsFormulas(
+  data: Buffer,
+  updates: OdsFormulaUpdate[]
+): Promise<Buffer> {
+  if (!updates.length) return data;
+  const zip = await JSZip.loadAsync(data);
+  const part = zip.file('content.xml');
+  if (!part) throw new DocumentError('WRITE_FAILED', 'Generated ODS is missing content.xml');
+  let xml = await part.async('string');
+  for (const update of updates) xml = patchOdsCellFormula(xml, update);
+  zip.file('content.xml', xml);
+  return zip.generateAsync({ type: 'nodebuffer' });
+}
+
+async function writeWorkbook(
+  filePath: string,
+  wb: XLSX.WorkBook,
+  odsFormulas: OdsFormulaUpdate[] = []
+): Promise<void> {
   const bookType = bookTypeFor(filePath);
-  const data = XLSX.write(wb, { type: 'buffer', bookType }) as Buffer;
+  let data = XLSX.write(wb, { type: 'buffer', bookType }) as Buffer;
+  if (bookType === 'ods') data = await patchOdsFormulas(data, odsFormulas);
   await writeFileAtomic(filePath, data);
 }
 
@@ -91,7 +304,8 @@ export async function writeSpreadsheet(
     XLSX.utils.book_append_sheet(wb, ws, name);
   }
   await writeWorkbook(filePath, wb);
-  const label = bookTypeFor(filePath) === 'biff8' ? 'XLS' : 'XLSX';
+  const bookType = bookTypeFor(filePath);
+  const label = bookType === 'biff8' ? 'XLS' : bookType.toUpperCase();
   return { message: `Created ${label}: ${filePath}` };
 }
 
@@ -102,6 +316,7 @@ export async function updateSpreadsheetCells(
   const buf = await readFile(filePath);
   const wb = XLSX.read(buf, { type: 'buffer' });
   let count = 0;
+  const odsFormulas: OdsFormulaUpdate[] = [];
   for (const u of updates) {
     const sheetName = u.sheet ?? wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
@@ -117,6 +332,13 @@ export async function updateSpreadsheetCells(
     if (typeof u.value === 'string' && u.value.startsWith('=')) {
       // Explicit formula update.
       ws[addr] = { t: 'n', f: u.value.slice(1) };
+      if (bookTypeFor(filePath) === 'ods') {
+        odsFormulas.push({
+          sheet: sheetName,
+          address: addr,
+          formula: u.value.slice(1),
+        });
+      }
     } else {
       const next = cellObject(coerceValue(u.value));
       // Literal value replaces any formula but keeps number format / style.
@@ -126,7 +348,7 @@ export async function updateSpreadsheetCells(
     }
     count++;
   }
-  await writeWorkbook(filePath, wb);
+  await writeWorkbook(filePath, wb, odsFormulas);
   return { message: `Updated ${count} cell(s) in ${filePath}`, changes: count };
 }
 
@@ -144,7 +366,7 @@ export async function readSpreadsheetStructuredAsync(
 
 export function readSpreadsheetStructuredFromBuffer(
   buf: Buffer,
-  format: 'xlsx' | 'xls' = 'xlsx'
+  format: 'xlsx' | 'xls' | 'ods' = 'xlsx'
 ): SpreadsheetStructured {
   const wb = XLSX.read(buf, { type: 'buffer' });
   const sheets: SheetGrid = {};
