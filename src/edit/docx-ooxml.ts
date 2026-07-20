@@ -1,6 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import JSZip from 'jszip';
 import { DocumentError } from '../utils/errors.js';
+import { decodeXmlEntities, escapeXml } from '../utils/xml.js';
+import { loadZipBuffer, readFileLimited } from '../utils/zip.js';
+import { writeFileAtomic } from '../utils/paths.js';
 import type { DocxStructured } from '../types.js';
 import { docxStructuredFromZip } from '../parse/docx-blocks.js';
 
@@ -10,14 +12,7 @@ const DOC_PARTS: Array<string | RegExp> = [
   /^word\/footer\d*\.xml$/,
 ];
 
-export function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
+export { escapeXml } from '../utils/xml.js';
 
 function isDocPart(name: string): boolean {
   return DOC_PARTS.some((p) =>
@@ -26,8 +21,57 @@ function isDocPart(name: string): boolean {
 }
 
 async function loadZip(filePath: string): Promise<JSZip> {
-  const buf = await readFile(filePath);
-  return JSZip.loadAsync(buf);
+  const buf = await readFileLimited(filePath);
+  return loadZipBuffer(buf);
+}
+
+/** One <w:t> element in a paragraph: its span within the paragraph XML plus decoded text. */
+type TextToken = { start: number; end: number; decoded: string };
+
+function extractTextTokens(paraXml: string): TextToken[] {
+  const tokens: TextToken[] = [];
+  const wtRe = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:t(?:\s[^>]*)?\/>/g;
+  let m: RegExpExecArray | null;
+  while ((m = wtRe.exec(paraXml)) !== null) {
+    tokens.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      decoded: m[1] != null ? decodeXmlEntities(m[1]) : '',
+    });
+  }
+  return tokens;
+}
+
+/**
+ * Apply one replacement over decoded token texts. The insert lands only in the
+ * first overlapping token; the matched span is cleared from the rest.
+ */
+function applyReplacement(
+  texts: string[],
+  start: number,
+  end: number,
+  insert: string
+): string[] {
+  let pos = 0;
+  let inserted = false;
+  return texts.map((decoded) => {
+    const tokStart = pos;
+    const tokEnd = pos + decoded.length;
+    pos = tokEnd;
+    if (tokEnd <= start || tokStart >= end) return decoded;
+    const localStart = Math.max(0, start - tokStart);
+    const localEnd = Math.min(decoded.length, end - tokStart);
+    const before = decoded.slice(0, localStart);
+    const after = decoded.slice(localEnd);
+    const middle = inserted ? '' : insert;
+    inserted = true;
+    return before + middle + after;
+  });
+}
+
+function renderTextToken(decoded: string): string {
+  if (!decoded) return '<w:t/>';
+  return `<w:t xml:space="preserve">${escapeXml(decoded)}</w:t>`;
 }
 
 function replaceInParagraphXml(
@@ -36,42 +80,40 @@ function replaceInParagraphXml(
   newString: string,
   replaceAll: boolean
 ): { xml: string; count: number } {
-  const wtRegex = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
-  const runs: { full: string; text: string }[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = wtRegex.exec(paraXml)) !== null) {
-    runs.push({ full: m[0], text: m[1] });
-  }
-  if (runs.length === 0) {
-    return { xml: paraXml, count: 0 };
-  }
+  const tokens = extractTextTokens(paraXml);
+  if (!tokens.length) return { xml: paraXml, count: 0 };
 
-  const combined = runs.map((r) => r.text).join('');
-  if (!combined.includes(oldString)) {
-    return { xml: paraXml, count: 0 };
-  }
+  const combined = tokens.map((t) => t.decoded).join('');
+  if (!combined.includes(oldString)) return { xml: paraXml, count: 0 };
 
+  let texts = tokens.map((t) => t.decoded);
   let count = 0;
-  let updatedCombined = combined;
+  let searchFrom = 0;
+
   if (replaceAll) {
-    const parts = combined.split(oldString);
-    count = parts.length - 1;
-    updatedCombined = parts.join(newString);
+    while (true) {
+      const text = texts.join('');
+      const idx = text.indexOf(oldString, searchFrom);
+      if (idx === -1) break;
+      texts = applyReplacement(texts, idx, idx + oldString.length, newString);
+      count++;
+      searchFrom = idx + newString.length;
+    }
   } else {
     const idx = combined.indexOf(oldString);
     if (idx === -1) return { xml: paraXml, count: 0 };
+    texts = applyReplacement(texts, idx, idx + oldString.length, newString);
     count = 1;
-    updatedCombined =
-      combined.slice(0, idx) +
-      newString +
-      combined.slice(idx + oldString.length);
   }
 
-  const escaped = escapeXml(updatedCombined);
-  const newRun = `<w:r><w:t xml:space="preserve">${escaped}</w:t></w:r>`;
-  const pPrMatch = paraXml.match(/<w:pPr[\s\S]*?<\/w:pPr>/);
-  const pPr = pPrMatch ? pPrMatch[0] : '';
-  return { xml: `<w:p>${pPr}${newRun}</w:p>`, count };
+  // Splice changed <w:t> elements back in place (right to left keeps offsets
+  // valid) so hyperlinks, fields, bookmarks and run properties are untouched.
+  let xml = paraXml;
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (texts[i] === tokens[i].decoded) continue;
+    xml = xml.slice(0, tokens[i].start) + renderTextToken(texts[i]) + xml.slice(tokens[i].end);
+  }
+  return { xml, count };
 }
 
 function replaceInDocumentXml(
@@ -92,26 +134,6 @@ function replaceInDocumentXml(
     total += count;
     return next;
   });
-
-  if (total === 0 && xml.includes(oldString)) {
-    if (replaceAll) {
-      const parts = xml.split(oldString);
-      if (parts.length > 1) {
-        return { xml: parts.join(escapeXml(newString)), count: parts.length - 1 };
-      }
-    }
-    const idx = xml.indexOf(oldString);
-    if (idx !== -1) {
-      return {
-        xml:
-          xml.slice(0, idx) +
-          escapeXml(newString) +
-          xml.slice(idx + oldString.length),
-        count: 1,
-      };
-    }
-  }
-
   return { xml: result, count: total };
 }
 
@@ -154,11 +176,10 @@ export async function editDocx(
     );
   }
 
-  const { writeFile } = await import('node:fs/promises');
   const out = await zip.generateAsync({ type: 'nodebuffer' });
-  await writeFile(filePath, out);
+  await writeFileAtomic(filePath, out);
   return {
-    message: `DOCX updated: ${filePath} (${total} replacement(s); formatting partially preserved)`,
+    message: `DOCX updated: ${filePath} (${total} replacement(s); formatting preserved)`,
     changes: total,
   };
 }
@@ -184,12 +205,17 @@ export async function appendDocxParagraphs(
   if (!xml.includes('</w:body>')) {
     throw new DocumentError('PARSE_FAILED', 'Could not find w:body in document.xml');
   }
-  xml = xml.replace('</w:body>', `${blocks}</w:body>`);
+  // sectPr must remain the last child of w:body.
+  const sectPrIdx = xml.search(/<w:sectPr[\s>]/);
+  if (sectPrIdx >= 0) {
+    xml = xml.slice(0, sectPrIdx) + blocks + xml.slice(sectPrIdx);
+  } else {
+    xml = xml.replace('</w:body>', `${blocks}</w:body>`);
+  }
 
   zip.file('word/document.xml', xml);
-  const { writeFile } = await import('node:fs/promises');
   const out = await zip.generateAsync({ type: 'nodebuffer' });
-  await writeFile(filePath, out);
+  await writeFileAtomic(filePath, out);
   return {
     message: `DOCX: appended ${paragraphs.length} paragraph(s) to ${filePath}`,
     changes: paragraphs.length,
@@ -209,7 +235,7 @@ export async function readDocxStructured(
 export async function readDocxStructuredFromBuffer(
   buf: Buffer
 ): Promise<DocxStructured> {
-  const zip = await JSZip.loadAsync(buf);
+  const zip = await loadZipBuffer(buf);
   if (!zip.file('word/document.xml')) {
     throw new DocumentError('PARSE_FAILED', 'Invalid docx: missing word/document.xml');
   }

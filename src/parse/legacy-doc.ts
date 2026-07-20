@@ -1,7 +1,7 @@
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as CFB from 'cfb';
 import { DocumentError } from '../utils/errors.js';
+import { readFileLimited } from '../utils/zip.js';
 import { writeDocx } from '../write/docx.js';
 
 const MIN_STRING_LEN = 3;
@@ -102,7 +102,7 @@ export async function readLegacyDoc(filePath: string): Promise<{
   paragraphs: string[];
   source: 'ai-document-parser-doc-binary';
 }> {
-  const buf = await readFile(filePath);
+  const buf = await readFileLimited(filePath);
   return readLegacyDocBuffer(buf);
 }
 

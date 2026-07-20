@@ -66,19 +66,23 @@ See [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
 
 | Format | Parse | Convert | Edit | Write |
 |--------|-------|---------|------|-------|
-| docx | yes | md/html/text/chunks | replace/append | yes |
+| docx | yes | md/html/text/chunks/docx/odt/rtf/epub | replace/append | yes |
 | xlsx / xls | yes | csv/md/html/text/chunks | cell patch | yes |
 | pptx | yes | md/html/text/chunks | — | — |
 | pdf | text | md/html/text/chunks | — | plain text |
-| md / html / csv | yes | md/html/text/csv/chunks | — | — |
-| legacy .doc | heuristic | via extract / convertDocToDocx | — | via convert→docx |
-| odt / rtf / epub / legacy .ppt | — | — | — | — |
+| md / html / csv | yes | md/html/text/csv/chunks/docx/odt/rtf/epub | — | — |
+| legacy .doc | heuristic | md/html/text/chunks/docx/odt/rtf/epub | — | via convertDocToDocx |
+| odt | yes | md/html/text/chunks/docx/odt/rtf/epub | — | yes |
+| ods / odp | yes | csv (ods) / md/html/text/chunks | — | — |
+| rtf / epub | yes | md/html/text/chunks/docx/odt/rtf/epub | — | yes |
+| legacy .ppt | — | — | — | — |
 
 Notes:
 
 - Convert → **md/html** preserves structure for DOCX (headings, tables, bold/italic/strike, ordered lists, hyperlinks, footnotes; images omitted), HTML, CSV (GFM table), PPTX slides, XLSX sheets. MD→md is passthrough. PDF / legacy `.doc` stay plain text.
-- Convert targets `rtf` / `epub` / `pdf` are **not** supported (create PDF with `writeDocument`).
-- **DOCX** and **PPTX** cannot convert **to csv** (use a spreadsheet source).
+- Convert target `pdf` is **not** supported (create PDF with `writeDocument`).
+- **DOCX** and **PPTX** cannot convert **to csv** (use a spreadsheet source). Multi-sheet workbooks export the first sheet to CSV unless `options.sheet` is passed.
+- `getCapabilities()` (CLI: `capabilities`) reports the exact per-format matrix.
 
 ## Subpath exports
 
@@ -99,7 +103,9 @@ npx ai-document-parser convert deck.pptx --to md -o slides.md
 npx ai-document-parser edit file.docx --replace "old" "new"
 npx ai-document-parser edit file.docx --replace "dup" "new" --all
 npx ai-document-parser write-docx out.docx --content "Hello"
+npx ai-document-parser write-xlsx out.xlsx --sheet Data --csv "a,b\n1,2"
 npx ai-document-parser write-pdf out.pdf --content "Текст" --title "Отчёт"
+npx ai-document-parser capabilities --format docx
 ```
 
 ## License

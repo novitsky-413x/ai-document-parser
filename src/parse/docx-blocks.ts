@@ -264,11 +264,13 @@ function isOrderedList(
 
 function extractRunTexts(inner: string): string {
   const texts: string[] = [];
-  // Preserve tabs (TOC page-number separator) and text runs in document order.
-  const tokenRe = /<w:tab\b[^/]*\/>|<w:tab\b[^>]*>\s*<\/w:tab>|<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
+  // Preserve tabs (TOC page-number separator), line breaks and text runs in document order.
+  const tokenRe =
+    /<w:tab\b[^/]*\/>|<w:tab\b[^>]*>\s*<\/w:tab>|<w:br\b[^>]*\/>|<w:br\b[^>]*>\s*<\/w:br>|<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
   let tm: RegExpExecArray | null;
   while ((tm = tokenRe.exec(inner)) !== null) {
     if (tm[0].startsWith('<w:tab')) texts.push('\t');
+    else if (tm[0].startsWith('<w:br')) texts.push('\n');
     else texts.push(decodeXmlEntities(tm[1] ?? ''));
   }
   return texts.join('');

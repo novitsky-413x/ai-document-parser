@@ -1,5 +1,10 @@
+import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { DocumentError, wrapError } from '../utils/errors.js';
-import { isPathLike } from '../utils/paths.js';
+import { extOf, isPathLike } from '../utils/paths.js';
+import { stripBom } from '../utils/text.js';
+import { readFileLimited } from '../utils/zip.js';
 import type {
   DocumentInput,
   DocumentResult,
@@ -40,6 +45,11 @@ import {
 import { htmlToStructured, markdownToBlocks } from './html-blocks.js';
 import { flattenBlocksToParagraphs } from '../convert/blocks.js';
 import { chunkText } from '../convert/emit.js';
+import { parseOdfBuffer } from './odf.js';
+import { parseRtf } from './rtf.js';
+import { parseEpub } from './epub.js';
+import { buildParsedCanonical } from '../ir/projections.js';
+import { contentBlocksToFlow } from '../ir/projections.js';
 
 function toBuffer(input: DocumentInput): Buffer | null {
   if (typeof input === 'string') return null;
@@ -49,19 +59,50 @@ function toBuffer(input: DocumentInput): Buffer | null {
   return null;
 }
 
+async function resolveInput(
+  input: DocumentInput
+): Promise<{ format: DetectedFormat; buf: Buffer | null; filePath: string | undefined }> {
+  let buf = toBuffer(input);
+  const filePath = typeof input === 'string' && isPathLike(input) ? input : undefined;
+
+  if (filePath && !buf) {
+    buf = await readFileLimited(filePath);
+  }
+
+  const format = await resolveFormat(input, buf, filePath);
+  return { format, buf, filePath };
+}
+
+const BINARY_FORMATS = new Set(['docx', 'xlsx', 'xls', 'pptx', 'pdf', 'doc', 'odt', 'ods', 'odp', 'epub']);
+
 async function resolveFormat(
   input: DocumentInput,
   buf: Buffer | null,
   filePath: string | undefined
 ): Promise<DetectedFormat> {
   const fromExt = formatFromExt(filePath);
-  if (fromExt && fromExt !== 'unknown') return fromExt;
 
   if (buf) {
     const guessed = detectFormatFromBuffer(buf);
     if (guessed === 'docx' && isZipBuffer(buf)) {
-      return refineZipFormat(buf);
+      const refined = await refineZipFormat(buf);
+      if (fromExt && fromExt !== 'unknown' && BINARY_FORMATS.has(fromExt) && fromExt !== refined) {
+        return refined;
+      }
+      return refined;
     }
+    if (guessed && BINARY_FORMATS.has(guessed)) {
+      if (fromExt === 'xls' && guessed === 'doc') return 'xls';
+      if (fromExt === 'doc' && guessed === 'doc') return 'doc';
+      if (fromExt && fromExt !== 'unknown' && fromExt !== guessed) return guessed;
+      return guessed;
+    }
+  }
+
+  if (fromExt && fromExt !== 'unknown') return fromExt;
+
+  if (buf) {
+    const guessed = detectFormatFromBuffer(buf);
     if (guessed) return guessed;
   }
 
@@ -71,7 +112,7 @@ async function resolveFormat(
 
   throw new DocumentError(
     'UNSUPPORTED_FORMAT',
-    'Could not detect document format. Pass a path with a known extension.'
+    'Could not detect document format. Pass a path with a known extension or binary buffer.'
   );
 }
 
@@ -83,11 +124,9 @@ export async function parseDocument(
   options: ParseOptions = {}
 ): Promise<DocumentResult> {
   const output = options.output ?? 'text';
-  const buf = toBuffer(input);
-  const filePath = typeof input === 'string' && isPathLike(input) ? input : undefined;
 
   try {
-    const format = await resolveFormat(input, buf, filePath);
+    const { format, buf, filePath } = await resolveInput(input);
     assertSupportedParse(format);
 
     // Legacy .doc
@@ -193,21 +232,20 @@ export async function parseDocument(
 
     // MD / HTML / CSV
     if (format === 'md' || format === 'html' || format === 'csv') {
-      const raw =
+      const raw = stripBom(
         filePath != null
           ? await readTextFile(filePath)
           : buf
             ? buf.toString('utf8')
             : typeof input === 'string'
               ? input
-              : '';
+              : ''
+      );
       if (format === 'md') {
         const parsed = parseMarkdown(raw);
         const blocks = markdownToBlocks(parsed.text);
-        const paragraphs =
-          flattenBlocksToParagraphs(blocks).length > 0
-            ? flattenBlocksToParagraphs(blocks)
-            : parsed.paragraphs;
+        const flatParas = flattenBlocksToParagraphs(blocks);
+        const paragraphs = flatParas.length > 0 ? flatParas : parsed.paragraphs;
         if (output === 'structured') {
           const structured = {
             format: 'md' as const,
@@ -268,11 +306,90 @@ export async function parseDocument(
       return finish('csv', parsed.text, filePath, output, { rows: parsed.rows });
     }
 
+    // OpenDocument / RTF / EPUB
+    if (format === 'odt' || format === 'ods' || format === 'odp') {
+      const parsedCanon = await parseOdfBuffer(buf!, format);
+      return canonicalResult(parsedCanon, filePath, output);
+    }
+
+    if (format === 'rtf') {
+      const raw = stripBom(
+        filePath != null
+          ? await readTextFile(filePath)
+          : buf
+            ? buf.toString('utf8')
+            : typeof input === 'string'
+              ? input
+              : ''
+      );
+      const parsedCanon = parseRtf(raw);
+      return canonicalResult(parsedCanon, filePath, output);
+    }
+
+    if (format === 'epub') {
+      const parsedCanon = await parseEpub(buf!);
+      return canonicalResult(parsedCanon, filePath, output);
+    }
+
     throw new DocumentError('UNSUPPORTED_FORMAT', `Unsupported format: ${format}`);
   } catch (err) {
     if (err instanceof DocumentError) throw err;
     throw wrapError('PARSE_FAILED', 'Failed to parse document', err);
   }
+}
+
+function canonicalResult(
+  parsed: ReturnType<typeof buildParsedCanonical>,
+  filePath: string | undefined,
+  output: string
+): DocumentResult {
+  const format = parsed.canonical.format;
+  if (output === 'structured') {
+    const payload = JSON.stringify(parsed.structured, null, 2);
+    return {
+      format,
+      text: payload,
+      charCount: payload.length,
+      path: filePath,
+      structured: parsed.structured,
+      warnings: parsed.warnings,
+    };
+  }
+  if (output === 'ast') {
+    const ast: import('../types.js').DocumentAst =
+      parsed.canonical.kind === 'flow'
+        ? { type: 'flow', format, blocks: parsed.canonical.blocks }
+        : parsed.canonical.kind === 'workbook'
+          ? { type: 'workbook', format, sheets: parsed.canonical.sheets }
+          : { type: 'presentation', format, slides: parsed.canonical.slides };
+    return {
+      format,
+      text: '',
+      charCount: 0,
+      path: filePath,
+      ast,
+      warnings: parsed.warnings,
+    };
+  }
+  if (output === 'chunks') {
+    const chunks = chunkText(parsed.plainText);
+    const payload = JSON.stringify(chunks, null, 2);
+    return {
+      format,
+      text: payload,
+      charCount: payload.length,
+      path: filePath,
+      chunks,
+      warnings: parsed.warnings,
+    };
+  }
+  return {
+    format,
+    text: parsed.plainText,
+    charCount: parsed.plainText.length,
+    path: filePath,
+    warnings: parsed.warnings,
+  };
 }
 
 function pptxResult(
@@ -331,7 +448,13 @@ function finish(
       text: '',
       charCount: 0,
       path: filePath,
-      ast: { type: format, ...shape },
+      ast: {
+        type: 'flow',
+        format,
+        blocks: contentBlocksToFlow(
+          (shape.blocks as import('../types.js').ContentBlock[] | undefined) ?? []
+        ),
+      },
     };
   }
   if (output === 'chunks') {

@@ -3,7 +3,8 @@ import { readFile } from 'node:fs/promises';
 export type TextFormat = 'md' | 'html' | 'csv';
 
 export async function readTextFile(path: string): Promise<string> {
-  return readFile(path, 'utf8');
+  const text = await readFile(path, 'utf8');
+  return text.startsWith('\uFEFF') ? text.slice(1) : text;
 }
 
 export function parseMarkdown(text: string): {
@@ -34,10 +35,11 @@ export function parseHtml(text: string): {
   const plain = withBreaks
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   const paragraphs = plain
@@ -52,27 +54,16 @@ export function parseCsv(text: string): {
   text: string;
   rows: string[][];
 } {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const rows: string[][] = [];
-  for (const line of lines) {
-    if (line === '' && rows.length === 0) continue;
-    rows.push(splitCsvLine(line));
-  }
-  // drop trailing empty line
-  while (rows.length && rows[rows.length - 1].every((c) => c === '')) {
-    rows.pop();
-  }
-  return { format: 'csv', text: text.replace(/\r\n/g, '\n'), rows };
-}
-
-function splitCsvLine(line: string): string[] {
-  const cells: string[] = [];
+  let row: string[] = [];
   let cur = '';
   let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
+
+  for (let i = 0; i < normalized.length; i++) {
+    const ch = normalized[i];
     if (inQuotes) {
-      if (ch === '"' && line[i + 1] === '"') {
+      if (ch === '"' && normalized[i + 1] === '"') {
         cur += '"';
         i++;
       } else if (ch === '"') {
@@ -80,15 +71,27 @@ function splitCsvLine(line: string): string[] {
       } else {
         cur += ch;
       }
-    } else if (ch === '"') {
+      continue;
+    }
+    if (ch === '"') {
       inQuotes = true;
     } else if (ch === ',') {
-      cells.push(cur);
+      row.push(cur);
+      cur = '';
+    } else if (ch === '\n') {
+      row.push(cur);
+      if (row.some((c) => c !== '') || rows.length > 0) rows.push(row);
+      row = [];
       cur = '';
     } else {
       cur += ch;
     }
   }
-  cells.push(cur);
-  return cells;
+  row.push(cur);
+  if (row.some((c) => c !== '') || rows.length > 0) rows.push(row);
+
+  while (rows.length && rows[rows.length - 1].every((c) => c === '')) {
+    rows.pop();
+  }
+  return { format: 'csv', text: normalized, rows };
 }

@@ -18,7 +18,7 @@ type ParseOptions = {
 
 Returns `DocumentResult` with `format`, `text`, `charCount`, optional `structured` / `ast` / `chunks` / `warnings`.
 
-**Core formats:** `docx`, `xlsx`, `xls`, `pptx`, `pdf`, `md`, `html`, `csv`, legacy `doc`.
+**Core formats:** `docx`, `xlsx`, `xls`, `pptx`, `pdf`, `md`, `html`, `csv`, legacy `doc`, `odt`, `ods`, `odp`, `rtf`, `epub`.
 
 **Structured contracts (for edit / agent tools):**
 
@@ -43,6 +43,8 @@ type ConvertOptions = {
   ocr?: boolean;
   extractAttachments?: boolean;
   generator?: Record<string, unknown>;
+  /** Sheet name to export when converting a workbook to CSV (default: first sheet). */
+  sheet?: string;
 };
 ```
 
@@ -58,19 +60,21 @@ For **md/html**, rich sources emit from `blocks` (structure preserved):
 | md → md | **passthrough** of original file text |
 | pdf / legacy doc | plain text only (no reliable structure) |
 
-Supported `to`: `'md' | 'html' | 'csv' | 'text' | 'chunks'`
+Supported `to`: `'md' | 'html' | 'csv' | 'text' | 'chunks' | 'rtf' | 'epub' | 'docx' | 'odt'`
 
-| Source | Typical emit |
+| Source | Allowed targets |
 |--------|----------------|
-| docx / doc | md, html, text, chunks — **not** csv |
-| xlsx / xls | csv, md, html, text, chunks |
-| pptx | md, html, text, chunks — **not** csv |
+| docx / doc / odt / rtf / epub | md, html, text, chunks, docx, odt, rtf, epub |
+| xlsx / xls / ods | csv, md, html, text, chunks |
+| pptx / odp | md, html, text, chunks |
 | pdf | md, html, text, chunks (plain) |
-| md / html / csv | md, html, text, csv, chunks |
+| md / html / csv | md, html, text, csv, chunks, docx, odt, rtf, epub |
 
-Not supported as convert **targets**: `'rtf' | 'epub' | 'pdf'` (for PDF creation use `writeDocument`).
+Not supported as convert **targets**: `'pdf'` (for PDF creation use `writeDocument`).
 
-Input may be a path or buffer (same as `parseDocument`).
+Use `getCapabilities()` (also exposed as CLI `capabilities`) to inspect per-format parse/convert/edit/write support.
+
+Extensionless paths and mislabeled binaries are detected from magic bytes / ZIP package parts when possible.
 
 ## `editDocument(path, op)`
 
@@ -101,6 +105,7 @@ There is **no** surgical edit for pptx / pdf / md / html / csv.
 { type: 'docx', content: string | string[] }
 { type: 'xlsx' | 'xls', sheets: Record<string, cell[][]> }
 { type: 'pdf', content: string, title?: string }
+{ type: 'odt' | 'rtf' | 'epub', content: string | string[], title?: string }
 ```
 
 ## `DocumentError`

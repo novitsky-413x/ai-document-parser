@@ -12,7 +12,11 @@ export type ConvertFormat =
   | 'epub'
   | 'text'
   | 'chunks'
-  | 'pdf';
+  | 'pdf'
+  | 'docx'
+  | 'odt'
+  | 'ods'
+  | 'odp';
 
 export type DocumentInput = string | Buffer | Uint8Array | ArrayBuffer;
 
@@ -29,6 +33,8 @@ export interface ConvertOptions {
   ocr?: boolean;
   extractAttachments?: boolean;
   generator?: Record<string, unknown>;
+  /** Sheet name to export when converting a workbook to CSV (default: first sheet). */
+  sheet?: string;
 }
 
 export interface DocumentWarning {
@@ -52,7 +58,7 @@ export interface DocumentResult {
     | PptxStructured
     | Record<string, unknown>;
   /** Simplified document shape when output === 'ast' */
-  ast?: unknown;
+  ast?: DocumentAst;
   /** Chunks when output === 'chunks' */
   chunks?: unknown[];
   warnings?: DocumentWarning[];
@@ -93,6 +99,8 @@ export type InlineRun = {
   /** When set, emit as markdown/HTML link. */
   href?: string;
   strike?: boolean;
+  /** Inline code span. */
+  code?: boolean;
 };
 
 /** Shared structural model for convert → md/html. */
@@ -155,12 +163,30 @@ export type WriteDocumentInput =
       type: 'pdf';
       content: string;
       title?: string;
+    }
+  | {
+      type: 'odt';
+      content: string | string[];
+    }
+  | {
+      type: 'rtf';
+      content: string | string[];
+    }
+  | {
+      type: 'epub';
+      content: string | string[];
+      title?: string;
     };
 
 export interface WriteResult {
   path: string;
   message: string;
 }
+
+export type DocumentAst =
+  | { type: 'flow'; format: string; blocks: unknown[] }
+  | { type: 'workbook'; format: string; sheets: unknown[] }
+  | { type: 'presentation'; format: string; slides: unknown[] };
 
 export type DocumentErrorCode =
   | 'UNSUPPORTED_FORMAT'

@@ -104,15 +104,59 @@ export function emitTextFromSpreadsheet(structured: SpreadsheetStructured): stri
   return spreadsheetToText(structured);
 }
 
-export function chunkText(text: string, maxChars = 1200): string[] {
+export function chunkText(
+  text: string,
+  blocks?: ContentBlock[],
+  maxChars = 1200,
+  overlap = 120
+): string[] {
+  maxChars = Math.max(1, Math.floor(maxChars));
+  overlap = Math.min(Math.max(0, Math.floor(overlap)), maxChars - 1);
   const trimmed = text.trim();
   if (!trimmed) return [];
-  if (trimmed.length <= maxChars) return [trimmed];
-  const chunks: string[] = [];
-  let i = 0;
-  while (i < trimmed.length) {
-    chunks.push(trimmed.slice(i, i + maxChars));
-    i += maxChars;
+
+  if (blocks?.length) {
+    const segments: string[] = [];
+    for (const b of blocks) {
+      if (b.type === 'heading' || b.type === 'paragraph' || b.type === 'list_item') {
+        const t = b.runs.map((r) => r.text).join('').trim();
+        if (t) segments.push(t);
+      } else if (b.type === 'table') {
+        segments.push(
+          b.rows.map((row) => row.map((c) => String(c ?? '').trim()).join(' | ')).join('\n')
+        );
+      } else if (b.type === 'code') {
+        segments.push(b.text);
+      }
+    }
+    const joined = segments.join('\n\n');
+    return chunkText(joined, undefined, maxChars, overlap);
   }
+
+  if (trimmed.length <= maxChars) return [trimmed];
+
+  const chunks: string[] = [];
+  const paragraphs = trimmed.split(/\n\s*\n/);
+  let buf = '';
+  for (const p of paragraphs) {
+    const piece = p.trim();
+    if (!piece) continue;
+    if ((buf + '\n\n' + piece).trim().length > maxChars) {
+      if (buf) chunks.push(buf.trim());
+      if (piece.length <= maxChars) {
+        buf = piece;
+      } else {
+        let i = 0;
+        while (i < piece.length) {
+          chunks.push(piece.slice(i, i + maxChars));
+          i += maxChars - overlap;
+        }
+        buf = '';
+      }
+    } else {
+      buf = buf ? `${buf}\n\n${piece}` : piece;
+    }
+  }
+  if (buf.trim()) chunks.push(buf.trim());
   return chunks;
 }

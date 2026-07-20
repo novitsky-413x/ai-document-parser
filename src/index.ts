@@ -16,6 +16,7 @@ export {
 } from './edit/index.js';
 export { writeDocument, writeDocx, writePdf, writeSpreadsheet } from './write/index.js';
 export { DocumentError } from './utils/errors.js';
+export { getCapabilities } from './adapters/registry.js';
 
 export type {
   ParseOptions,
@@ -37,4 +38,6 @@ export type {
   WriteDocumentInput,
   WriteResult,
   DocumentErrorCode,
+  DocumentAst,
 } from './types.js';
+export type { AdapterCapabilities, ConvertTarget } from './ir/types.js';

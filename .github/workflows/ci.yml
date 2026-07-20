@@ -22,3 +22,5 @@ jobs:
       - run: npm run check-licenses
       - run: npm run build
       - run: npm test
+      - run: node scripts/generate-scratch-fixtures.mjs
+      - run: npm run test:smoke

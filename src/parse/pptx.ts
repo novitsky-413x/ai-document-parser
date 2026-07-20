@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises';
-import JSZip from 'jszip';
+import type JSZip from 'jszip';
 import { DocumentError, wrapError } from '../utils/errors.js';
+import { loadZipBuffer, readFileLimited } from '../utils/zip.js';
 import type { ContentBlock, InlineRun, PptxStructured } from '../types.js';
 import { flattenBlocksToParagraphs } from '../convert/blocks.js';
 
@@ -142,7 +142,7 @@ async function readPptxFromZip(zip: JSZip): Promise<PptxStructured> {
 
 export async function readPptxStructured(filePath: string): Promise<PptxStructured> {
   try {
-    const buf = await readFile(filePath);
+    const buf = await readFileLimited(filePath);
     return readPptxStructuredFromBuffer(buf);
   } catch (err) {
     if (err instanceof DocumentError) throw err;
@@ -154,7 +154,7 @@ export async function readPptxStructuredFromBuffer(
   buf: Buffer
 ): Promise<PptxStructured> {
   try {
-    const zip = await JSZip.loadAsync(buf);
+    const zip = await loadZipBuffer(buf);
     return readPptxFromZip(zip);
   } catch (err) {
     if (err instanceof DocumentError) throw err;

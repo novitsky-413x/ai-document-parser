@@ -1,6 +1,5 @@
-import { writeFile } from 'node:fs/promises';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
-import { ensureParentDir } from '../utils/paths.js';
+import { ensureParentDir, writeFileAtomic } from '../utils/paths.js';
 import { wrapError } from '../utils/errors.js';
 
 export async function writeDocx(
@@ -30,7 +29,7 @@ export async function writeDocx(
 
     const buffer = await Packer.toBuffer(doc);
     await ensureParentDir(filePath);
-    await writeFile(filePath, buffer);
+    await writeFileAtomic(filePath, buffer);
     return {
       message: `Created DOCX: ${filePath} (${paragraphs.length} paragraph(s))`,
     };

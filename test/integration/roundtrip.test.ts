@@ -212,8 +212,8 @@ describe('write + parse + edit', () => {
   });
 
   it('rejects unsupported formats', async () => {
-    const file = path.join(dir, 'notes.odt');
-    writeFileSync(file, 'PK\x03\x04not-really', 'utf8');
+    const file = path.join(dir, 'notes.ppt');
+    writeFileSync(file, 'not-a-real-ppt', 'utf8');
     await assert.rejects(
       () => parseDocument(file, { output: 'text' }),
       (err: unknown) =>
@@ -456,16 +456,25 @@ describe('convertDocument matrix', () => {
     assert.match(String(md.value), /From buffer/);
   });
 
-  it('rejects unsupported convert targets rtf/epub/pdf', async () => {
+  it('rejects unsupported convert target pdf', async () => {
     const file = path.join(dir, 'c-reject.docx');
     await writeDocument(file, { type: 'docx', content: ['x'] });
-    for (const to of ['pdf', 'rtf', 'epub'] as const) {
-      await assert.rejects(
-        () => convertDocument(file, to),
-        (err: unknown) =>
-          err instanceof DocumentError && err.code === 'UNSUPPORTED_FORMAT'
-      );
-    }
+    await assert.rejects(
+      () => convertDocument(file, 'pdf'),
+      (err: unknown) =>
+        err instanceof DocumentError && err.code === 'UNSUPPORTED_FORMAT'
+    );
+  });
+
+  it('converts docx to rtf and epub', async () => {
+    const file = path.join(dir, 'c-rich.docx');
+    await writeDocument(file, { type: 'docx', content: ['Hello **world**'] });
+    const rtf = await convertDocument(file, 'rtf');
+    assert.equal(rtf.format, 'rtf');
+    assert.match(String(rtf.value), /Hello/);
+    const epub = await convertDocument(file, 'epub');
+    assert.equal(epub.format, 'epub');
+    assert.ok(Buffer.isBuffer(epub.value) || epub.value instanceof Uint8Array);
   });
 });
 

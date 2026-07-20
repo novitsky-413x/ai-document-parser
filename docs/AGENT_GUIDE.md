@@ -49,8 +49,10 @@ Use `convertDocument` when you need a single artifact for RAG or downstream tool
 | Embedding chunks | `convertDocument(path, 'chunks')` or `parseDocument(..., { output: 'chunks' })` |
 | Spreadsheet dump | `convertDocument(xlsxPath, 'csv')` or `'md'` for GFM tables |
 
-Do **not** convert DOCX/PPTX to `csv`. Unsupported convert targets: `pdf`, `rtf`, `epub`.  
-PDF / legacy `.doc` → md is plain text only (no reliable document structure).
+Do **not** convert DOCX/PPTX to `csv`. The only unsupported convert target is `pdf` (use `writeDocument` for plain-text PDF).  
+Flow formats (docx/odt/rtf/epub/md/html) also convert to binary `docx` / `odt` / `rtf` / `epub`.  
+PDF / legacy `.doc` → md is plain text only (no reliable document structure).  
+Multi-sheet workbooks: pass `options.sheet` to `convertDocument(path, 'csv', { sheet: 'Q2' })`.
 
 ## When to use AST / chunks
 

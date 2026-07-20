@@ -18,6 +18,11 @@ export const CORE_PARSE_FORMATS = [
   'csv',
   'doc',
   'pptx',
+  'odt',
+  'ods',
+  'odp',
+  'rtf',
+  'epub',
 ] as const;
 
 export type CoreParseFormat = (typeof CORE_PARSE_FORMATS)[number];
@@ -25,4 +30,4 @@ export type CoreParseFormat = (typeof CORE_PARSE_FORMATS)[number];
 export const CORE_PARSE_FORMAT_SET = new Set<string>(CORE_PARSE_FORMATS);
 
 export const CORE_FORMATS_HELP =
-  'docx, xlsx, xls, pptx, pdf, md, html, csv, legacy doc';
+  'docx, xlsx, xls, pptx, pdf, md, html, csv, legacy doc, odt, ods, odp, rtf, epub';

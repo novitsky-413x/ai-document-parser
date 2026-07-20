@@ -29,6 +29,12 @@ import {
 import { pptxToText } from '../parse/pptx.js';
 import { isPathLike } from '../utils/paths.js';
 import { readFile } from 'node:fs/promises';
+import { allowedConvertTargets } from '../adapters/registry.js';
+import { contentBlocksToFlow } from '../ir/projections.js';
+import { emitRtfFromFlow } from '../parse/rtf.js';
+import { emitEpubFromFlow } from '../parse/epub.js';
+import { writeDocxFromBlocks } from '../write/docx-structured.js';
+import { writeOdtFromBlocks } from '../write/odt.js';
 
 const FORMAT_MAP: Record<string, ConvertFormat | 'text'> = {
   md: 'md',
@@ -41,18 +47,17 @@ const FORMAT_MAP: Record<string, ConvertFormat | 'text'> = {
   pdf: 'pdf',
   rtf: 'rtf',
   epub: 'epub',
+  docx: 'docx',
+  odt: 'odt',
+  ods: 'ods',
+  odp: 'odp',
 };
 
-/**
- * Convert a document to another format in one step (parse + generate).
- * Driven by parseDocument structured result — works for paths and buffers alike.
- */
 export async function convertDocument(
   input: DocumentInput,
   to: ConvertFormat | string,
   options: ConvertOptions = {}
 ): Promise<ConvertResult> {
-  void options;
   const dest = FORMAT_MAP[String(to).toLowerCase()];
   if (!dest) {
     throw new DocumentError(
@@ -62,13 +67,6 @@ export async function convertDocument(
   }
 
   try {
-    if (dest === 'rtf' || dest === 'epub') {
-      throw new DocumentError(
-        'UNSUPPORTED_FORMAT',
-        `Convert target "${dest}" is not supported. Use md, html, csv, text, or chunks.`
-      );
-    }
-
     if (dest === 'pdf') {
       throw new DocumentError(
         'UNSUPPORTED_FORMAT',
@@ -76,7 +74,6 @@ export async function convertDocument(
       );
     }
 
-    // Markdown → md: passthrough original source text
     if (dest === 'md' && typeof input === 'string' && isPathLike(input)) {
       const ext = input.toLowerCase();
       if (ext.endsWith('.md') || ext.endsWith('.markdown')) {
@@ -86,8 +83,14 @@ export async function convertDocument(
     }
 
     const parsed = await parseDocument(input, { output: 'structured' });
+    const allowed = allowedConvertTargets(parsed.format);
+    if (!allowed.includes(dest as typeof allowed[number])) {
+      throw new DocumentError(
+        'UNSUPPORTED_FORMAT',
+        `Cannot convert ${parsed.format} to ${dest}. Allowed: ${allowed.join(', ')}`
+      );
+    }
 
-    // MD structured may carry raw for passthrough when input was buffer/string content
     if (dest === 'md' && parsed.format === 'md') {
       const raw = (parsed.structured as { raw?: string } | undefined)?.raw;
       if (typeof raw === 'string') {
@@ -95,7 +98,7 @@ export async function convertDocument(
       }
     }
 
-    return emitFromParsed(parsed, dest);
+    return await emitFromParsed(parsed, dest, options);
   } catch (err) {
     if (err instanceof DocumentError) throw err;
     throw wrapError('CONVERT_FAILED', `Failed to convert to ${to}`, err);
@@ -115,12 +118,30 @@ function blocksOf(parsed: DocumentResult): ContentBlock[] | undefined {
   return Array.isArray(blocks) ? blocks : undefined;
 }
 
+async function emitBinaryFlow(
+  blocks: ContentBlock[],
+  dest: 'rtf' | 'epub' | 'docx' | 'odt',
+  messages: ConvertResult['messages']
+): Promise<ConvertResult> {
+  const flow = contentBlocksToFlow(blocks);
+  if (dest === 'rtf') {
+    return { value: emitRtfFromFlow(flow), messages, format: 'rtf' };
+  }
+  if (dest === 'epub') {
+    return { value: await emitEpubFromFlow(flow), messages, format: 'epub' };
+  }
+  if (dest === 'docx') {
+    return { value: await writeDocxFromBlocks(flow), messages, format: 'docx' };
+  }
+  return { value: await writeOdtFromBlocks(flow), messages, format: 'odt' };
+}
+
 function emitRich(
   blocks: ContentBlock[],
   dest: ConvertFormat | 'text',
   messages: ConvertResult['messages'],
   plainFallback: string
-): ConvertResult {
+): ConvertResult | Promise<ConvertResult> {
   if (dest === 'md') {
     return { value: emitMarkdownFromBlocks(blocks), messages, format: 'md' };
   }
@@ -131,7 +152,7 @@ function emitRich(
     return { value: emitText(plainFallback), messages, format: 'text' };
   }
   if (dest === 'chunks') {
-    return { value: chunkText(plainFallback), messages, format: 'chunks' };
+    return { value: chunkText(plainFallback, blocks), messages, format: 'chunks' };
   }
   if (dest === 'csv') {
     const csv = plainFallback
@@ -140,24 +161,43 @@ function emitRich(
       .join('\n');
     return { value: csv, messages, format: 'csv' };
   }
+  if (dest === 'rtf' || dest === 'epub' || dest === 'docx' || dest === 'odt') {
+    return emitBinaryFlow(blocks, dest, messages);
+  }
   throw new DocumentError('UNSUPPORTED_FORMAT', `Unsupported convert target: ${dest}`);
 }
 
-function emitFromParsed(
+async function emitFromParsed(
   parsed: DocumentResult,
-  dest: ConvertFormat | 'text'
-): ConvertResult {
+  dest: ConvertFormat | 'text',
+  options: ConvertOptions = {}
+): Promise<ConvertResult> {
   const messages = parsed.warnings ?? [];
   const format = parsed.format;
 
-  if (format === 'xlsx' || format === 'xls') {
+  if (format === 'xlsx' || format === 'xls' || format === 'ods') {
     const structured = parsed.structured as SpreadsheetStructured;
     if (dest === 'csv') {
-      return { value: emitCsvFromSheet(structured), messages, format: 'csv' };
+      const sheetNames = Object.keys(structured.sheets);
+      if (options.sheet != null && !sheetNames.includes(options.sheet)) {
+        throw new DocumentError(
+          'INVALID_ARGUMENT',
+          `Sheet "${options.sheet}" not found. Available: ${sheetNames.join(', ')}`
+        );
+      }
+      const sheet = options.sheet ?? sheetNames[0];
+      if (options.sheet == null && sheetNames.length > 1) {
+        messages.push({
+          code: 'CSV_FIRST_SHEET',
+          message: `CSV export uses first sheet "${sheetNames[0]}". Pass options.sheet to export another sheet.`,
+        });
+      }
+      return { value: emitCsvFromSheet(structured, sheet), messages, format: 'csv' };
     }
     const blocks = blocksFromSpreadsheet(structured.sheets);
     const plain = emitTextFromSpreadsheet(structured);
-    return emitRich(blocks, dest, messages, plain);
+    const rich = emitRich(blocks, dest, messages, plain);
+    return rich instanceof Promise ? rich : rich;
   }
 
   if (format === 'csv') {
@@ -168,49 +208,34 @@ function emitFromParsed(
       return { value: csvText, messages, format: 'csv' };
     }
     const blocks = blocksFromCsvRows(rows);
-    if (dest === 'md' || dest === 'html') {
-      return emitRich(blocks, dest, messages, csvText);
+    if (dest === 'md' || dest === 'html' || dest === 'rtf' || dest === 'epub' || dest === 'docx' || dest === 'odt') {
+      const rich = emitRich(blocks, dest, messages, csvText);
+      return rich instanceof Promise ? rich : rich;
     }
     return emitFromPlain(csvText, dest, messages);
   }
 
-  if (format === 'docx') {
-    if (dest === 'csv') {
-      throw new DocumentError(
-        'UNSUPPORTED_FORMAT',
-        'Cannot convert DOCX/DOC to CSV; use a spreadsheet source.'
-      );
-    }
+  if (format === 'docx' || format === 'odt' || format === 'rtf' || format === 'epub') {
     const structured = parsed.structured as DocxStructured;
     const blocks = structured.blocks ?? [];
     const plain = (structured.paragraphs ?? []).join('\n\n');
-    if (blocks.length && (dest === 'md' || dest === 'html')) {
-      return emitRich(blocks, dest, messages, plain);
+    if (blocks.length) {
+      const rich = emitRich(blocks, dest, messages, plain);
+      return rich instanceof Promise ? rich : rich;
     }
     return emitFromParagraphs(structured.paragraphs ?? paragraphsOf(parsed), dest, messages);
   }
 
   if (format === 'doc') {
-    if (dest === 'csv') {
-      throw new DocumentError(
-        'UNSUPPORTED_FORMAT',
-        'Cannot convert DOCX/DOC to CSV; use a spreadsheet source.'
-      );
-    }
     return emitFromParagraphs(paragraphsOf(parsed), dest, messages);
   }
 
-  if (format === 'pptx') {
-    if (dest === 'csv') {
-      throw new DocumentError(
-        'UNSUPPORTED_FORMAT',
-        'Cannot convert PPTX to CSV; use md, html, text, or chunks.'
-      );
-    }
+  if (format === 'pptx' || format === 'odp') {
     const structured = parsed.structured as PptxStructured;
     const plain = pptxToText(structured);
-    if (structured.blocks?.length && (dest === 'md' || dest === 'html')) {
-      return emitRich(structured.blocks, dest, messages, plain);
+    if (structured.blocks?.length) {
+      const rich = emitRich(structured.blocks, dest, messages, plain);
+      return rich instanceof Promise ? rich : rich;
     }
     return emitFromParagraphs(
       structured.slides.flatMap((s, i) => [`Slide ${i + 1}`, ...s]),
@@ -222,13 +247,13 @@ function emitFromParsed(
   if (format === 'html' || format === 'md') {
     const blocks = blocksOf(parsed);
     const plain = paragraphsOf(parsed).join('\n\n') || parsed.text;
-    if (blocks?.length && (dest === 'md' || dest === 'html')) {
-      // md→md already handled via raw passthrough above when possible
+    if (blocks?.length) {
       if (format === 'md' && dest === 'md') {
         const raw = (parsed.structured as { raw?: string })?.raw;
         if (raw) return { value: raw.replace(/\r\n/g, '\n'), messages, format: 'md' };
       }
-      return emitRich(blocks, dest, messages, plain);
+      const rich = emitRich(blocks, dest, messages, plain);
+      return rich instanceof Promise ? rich : rich;
     }
   }
 
@@ -244,7 +269,7 @@ function emitFromParagraphs(
   paragraphs: string[],
   dest: ConvertFormat | 'text',
   messages: ConvertResult['messages']
-): ConvertResult {
+): ConvertResult | Promise<ConvertResult> {
   if (dest === 'md') {
     return {
       value: emitMarkdownFromParagraphs(paragraphs),
@@ -276,6 +301,13 @@ function emitFromParagraphs(
   if (dest === 'csv') {
     const csv = paragraphs.map((line) => csvEscapeCell(line)).join('\n');
     return { value: csv, messages, format: 'csv' };
+  }
+  if (dest === 'rtf' || dest === 'epub' || dest === 'docx' || dest === 'odt') {
+    const blocks: ContentBlock[] = paragraphs.map((p) => ({
+      type: 'paragraph',
+      runs: [{ text: p }],
+    }));
+    return emitBinaryFlow(blocks, dest, messages);
   }
   throw new DocumentError('UNSUPPORTED_FORMAT', `Unsupported convert target: ${dest}`);
 }

@@ -109,11 +109,17 @@ cliOk('cli read sample.pptx structured', ['read', 'scratch/sample.pptx', '--outp
   }
 });
 
+cliOk('cli read sample.odt', ['read', 'scratch/sample.odt'], (s) => {
+  if (!/ODT Sample/.test(s) || !/Абзац на русском/.test(s)) {
+    throw new Error('expected odt heading and RU paragraph in output');
+  }
+});
+
 {
-  const r = cli('read', 'scratch/unsupported.odt');
+  const r = cli('read', 'scratch/unsupported.ppt');
   expect(
-    'cli read unsupported.odt rejects',
-    r.status !== 0 && /UNSUPPORTED|Unsupported/i.test(r.stderr + r.stdout),
+    'cli read unsupported.ppt → UNSUPPORTED_FORMAT',
+    r.status !== 0 && /UNSUPPORTED_FORMAT/.test(r.stderr + r.stdout),
     (r.stderr || r.stdout).trim().slice(0, 80)
   );
 }

@@ -49,7 +49,7 @@ Subpath exports: `ai-document-parser/parse|convert|edit|write`.
 | Write | `src/write/*` |
 | Legacy `.doc` | `src/parse/legacy-doc.ts` |
 
-Core formats: **docx, xlsx, xls, pptx, pdf, md, html, csv, legacy doc**. Unsupported (for now): odt/ods/odp, rtf, epub, legacy `.ppt`, rich HTML→PDF convert.
+Core formats: **docx, xlsx, xls, pptx, pdf, md, html, csv, legacy doc, odt, ods, odp, rtf, epub**. Unsupported (for now): legacy `.ppt`, rich HTML→PDF convert.
 
 ## Commands
 

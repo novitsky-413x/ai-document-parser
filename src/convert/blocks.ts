@@ -1,5 +1,6 @@
 import type { ContentBlock, InlineRun } from '../types.js';
 import { escapeHtml } from '../utils/text.js';
+import { sanitizeHref } from '../utils/url.js';
 
 export type { ContentBlock, InlineRun };
 
@@ -39,8 +40,15 @@ function escapeMdInline(s: string): string {
   return s.replace(/([\\`*_\[\]])/g, '\\$1');
 }
 
+/** Keep paragraph text from re-parsing as a heading / list / blockquote. */
+function escapeMdBlockStart(line: string): string {
+  return line
+    .replace(/^(\s*)(#{1,6} |> |[-*+] )/, (_m, ws: string, marker: string) => `${ws}\\${marker}`)
+    .replace(/^(\s*)(\d+)\. /, (_m, ws: string, num: string) => `${ws}${num}\\. `);
+}
+
 function runKey(r: InlineRun): string {
-  return `${r.bold ? 1 : 0}|${r.italic ? 1 : 0}|${r.strike ? 1 : 0}|${r.href ?? ''}`;
+  return `${r.bold ? 1 : 0}|${r.italic ? 1 : 0}|${r.strike ? 1 : 0}|${r.code ? 1 : 0}|${r.href ?? ''}`;
 }
 
 function isFootnoteAtom(text: string): boolean {
@@ -82,12 +90,18 @@ export function runsToMarkdown(runs: InlineRun[]): string {
       const trail = m?.groups?.trail ?? '';
       if (!core) return escapeMdInline(r.text);
 
+      if (r.code) {
+        return `${lead}\`${core.replace(/`/g, '\\`')}\`${trail}`;
+      }
       let t = escapeMdInline(core);
       if (r.strike) t = `~~${t}~~`;
       if (r.bold && r.italic) t = `**_${t}_**`;
       else if (r.bold) t = `**${t}**`;
       else if (r.italic) t = `_${t}_`;
-      if (r.href) t = `[${t}](${r.href})`;
+        if (r.href) {
+          const safe = sanitizeHref(r.href);
+          t = safe ? `[${t}](${safe})` : t;
+        }
       return `${lead}${t}${trail}`;
     })
     .join('');
@@ -147,7 +161,7 @@ export function emitMarkdownFromBlocks(blocks: ContentBlock[]): string {
       const hashes = '#'.repeat(b.level);
       parts.push(`${hashes} ${runsToMarkdown(b.runs)}`.trimEnd());
     } else if (b.type === 'paragraph') {
-      const line = runsToMarkdown(b.runs).trim();
+      const line = escapeMdBlockStart(runsToMarkdown(b.runs).trim());
       if (line) parts.push(line);
     } else if (b.type === 'table') {
       const md = emitMarkdownTable(b.rows);
@@ -155,8 +169,12 @@ export function emitMarkdownFromBlocks(blocks: ContentBlock[]): string {
     } else if (b.type === 'thematic_break') {
       parts.push('---');
     } else if (b.type === 'code') {
-      const lang = b.language ?? '';
-      parts.push(`\`\`\`${lang}\n${b.text.replace(/\n$/, '')}\n\`\`\``);
+      // Language token must not break the fence; grow the fence when the body contains one.
+      const lang = (b.language ?? '').replace(/[`\s]/g, '');
+      const body = b.text.replace(/\n$/, '');
+      const ticks = /`{3,}/.exec(body)?.[0].length ?? 0;
+      const fence = '`'.repeat(Math.max(3, ticks + 1));
+      parts.push(`${fence}${lang}\n${body}\n${fence}`);
     }
   }
   flushList();
@@ -165,23 +183,30 @@ export function emitMarkdownFromBlocks(blocks: ContentBlock[]): string {
 
 export function emitHtmlFromBlocks(blocks: ContentBlock[]): string {
   const parts: string[] = [];
-  let listOpen: 'ul' | 'ol' | null = null;
+  type ListCtx = { tag: 'ul' | 'ol'; liOpen: boolean };
+  const stack: ListCtx[] = [];
 
-  const closeList = () => {
-    if (listOpen) {
-      parts.push(`</${listOpen}>`);
-      listOpen = null;
-    }
+  const closeOne = () => {
+    const ctx = stack.pop()!;
+    if (ctx.liOpen) parts.push('</li>');
+    parts.push(`</${ctx.tag}>`);
+  };
+  const closeAll = () => {
+    while (stack.length) closeOne();
   };
 
   const runsToHtml = (runs: InlineRun[]): string =>
     mergeRuns(runs)
       .map((r) => {
         let t = escapeHtml(r.text);
+        if (r.code) t = `<code>${t}</code>`;
         if (r.strike) t = `<s>${t}</s>`;
         if (r.bold) t = `<strong>${t}</strong>`;
         if (r.italic) t = `<em>${t}</em>`;
-        if (r.href) t = `<a href="${escapeHtml(r.href)}">${t}</a>`;
+        if (r.href) {
+          const safe = sanitizeHref(r.href);
+          t = safe ? `<a href="${escapeHtml(safe)}">${t}</a>` : t;
+        }
         return t;
       })
       .join('');
@@ -189,15 +214,21 @@ export function emitHtmlFromBlocks(blocks: ContentBlock[]): string {
   for (const b of blocks) {
     if (b.type === 'list_item') {
       const tag = b.ordered ? 'ol' : 'ul';
-      if (listOpen !== tag) {
-        closeList();
+      const depth = Math.max(0, b.level) + 1;
+      while (stack.length > depth) closeOne();
+      if (stack.length === depth && stack[stack.length - 1].tag !== tag) closeOne();
+      while (stack.length < depth) {
+        // Nested lists open inside the still-open parent <li>.
         parts.push(`<${tag}>`);
-        listOpen = tag;
+        stack.push({ tag, liOpen: false });
       }
-      parts.push(`<li>${runsToHtml(b.runs)}</li>`);
+      const top = stack[stack.length - 1];
+      if (top.liOpen) parts.push('</li>');
+      parts.push(`<li>${runsToHtml(b.runs)}`);
+      top.liOpen = true;
       continue;
     }
-    closeList();
+    closeAll();
     if (b.type === 'heading') {
       parts.push(`<h${b.level}>${runsToHtml(b.runs)}</h${b.level}>`);
     } else if (b.type === 'paragraph') {
@@ -218,7 +249,7 @@ export function emitHtmlFromBlocks(blocks: ContentBlock[]): string {
       parts.push(`<pre><code>${escapeHtml(b.text)}</code></pre>`);
     }
   }
-  closeList();
+  closeAll();
   return `<!DOCTYPE html>\n<html><body>\n${parts.join('\n')}\n</body></html>\n`;
 }
 

@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as XLSX from '@e965/xlsx';
 import { DocumentError } from '../utils/errors.js';
-import { ensureParentDir } from '../utils/paths.js';
+import { assertMaxSpreadsheetCells } from '../utils/limits.js';
+import { ensureParentDir, writeFileAtomic } from '../utils/paths.js';
 import { csvEscapeCell } from '../utils/text.js';
 import type { SpreadsheetStructured } from '../types.js';
 
@@ -44,7 +45,16 @@ function cellObject(value: string | number | boolean | null): XLSX.CellObject {
 async function writeWorkbook(filePath: string, wb: XLSX.WorkBook): Promise<void> {
   const bookType = bookTypeFor(filePath);
   const data = XLSX.write(wb, { type: 'buffer', bookType }) as Buffer;
-  await writeFile(filePath, data);
+  await writeFileAtomic(filePath, data);
+}
+
+function assertValidSheetName(name: string): void {
+  if (!name || name.length > 31 || /[\\/?*[\]:]/.test(name)) {
+    throw new DocumentError(
+      'INVALID_ARGUMENT',
+      `Invalid sheet name "${name}": must be 1-31 chars without \\ / ? * [ ] :`
+    );
+  }
 }
 
 /** Expand worksheet !ref so a patched A1 address is included. */
@@ -74,10 +84,11 @@ export async function writeSpreadsheet(
   await ensureParentDir(filePath);
   const wb = XLSX.utils.book_new();
   for (const [name, rows] of Object.entries(sheets)) {
+    assertValidSheetName(name);
     const ws = XLSX.utils.aoa_to_sheet(
       rows.map((row) => row.map((c) => (c === null ? '' : coerceValue(c))))
     );
-    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+    XLSX.utils.book_append_sheet(wb, ws, name);
   }
   await writeWorkbook(filePath, wb);
   const label = bookTypeFor(filePath) === 'biff8' ? 'XLS' : 'XLSX';
@@ -102,7 +113,17 @@ export async function updateSpreadsheetCells(
       throw new DocumentError('INVALID_ARGUMENT', `Invalid cell address: ${u.cell}`);
     }
     ensureCellInRange(ws, addr);
-    ws[addr] = cellObject(coerceValue(u.value));
+    const prev = ws[addr] as XLSX.CellObject | undefined;
+    if (typeof u.value === 'string' && u.value.startsWith('=')) {
+      // Explicit formula update.
+      ws[addr] = { t: 'n', f: u.value.slice(1) };
+    } else {
+      const next = cellObject(coerceValue(u.value));
+      // Literal value replaces any formula but keeps number format / style.
+      if (prev?.z != null) next.z = prev.z;
+      if (prev?.s != null) next.s = prev.s;
+      ws[addr] = next;
+    }
     count++;
   }
   await writeWorkbook(filePath, wb);
@@ -128,7 +149,10 @@ export function readSpreadsheetStructuredFromBuffer(
   const wb = XLSX.read(buf, { type: 'buffer' });
   const sheets: SheetGrid = {};
   for (const name of wb.SheetNames) {
-    sheets[name] = sheetToGrid(wb.Sheets[name]);
+    const grid = sheetToGrid(wb.Sheets[name]);
+    const cells = grid.reduce((n, row) => n + row.length, 0);
+    assertMaxSpreadsheetCells(cells);
+    sheets[name] = grid;
   }
   return { format, sheets };
 }

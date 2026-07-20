@@ -175,22 +175,16 @@ export function markdownToBlocks(md: string): ContentBlock[] {
       i++;
       continue;
     }
-    if (/^\s*[-*+]\s+/.test(line)) {
-      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
-        const text = lines[i].replace(/^\s*[-*+]\s+/, '');
-        blocks.push({ type: 'list_item', level: 0, runs: [{ text }] });
-        i++;
-      }
-      continue;
-    }
-    if (/^\s*\d+\.\s+/.test(line)) {
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-        const text = lines[i].replace(/^\s*\d+\.\s+/, '');
+    if (/^\s*(?:[-*+]|\d+\.)\s+/.test(line)) {
+      while (i < lines.length && /^\s*(?:[-*+]|\d+\.)\s+/.test(lines[i])) {
+        const m = /^(\s*)([-*+]|\d+\.)\s+(.*)$/.exec(lines[i])!;
+        const level = Math.floor(m[1].replace(/\t/g, '  ').length / 2);
+        const ordered = /^\d+\.$/.test(m[2]);
         blocks.push({
           type: 'list_item',
-          level: 0,
-          ordered: true,
-          runs: [{ text }],
+          level,
+          ...(ordered ? { ordered: true } : {}),
+          runs: parseMarkdownInline(m[3]),
         });
         i++;
       }
@@ -232,7 +226,24 @@ export function markdownToBlocks(md: string): ContentBlock[] {
       para.push(lines[i]);
       i++;
     }
-    blocks.push({ type: 'paragraph', runs: [{ text: para.join(' ') }] });
+    blocks.push({ type: 'paragraph', runs: parseMarkdownInline(para.join(' ')) });
   }
   return blocks;
+}
+
+/** Parse inline markdown emphasis/links/code in a paragraph string. */
+export function parseMarkdownInline(text: string): InlineRun[] {
+  const runs: InlineRun[] = [];
+  const re =
+    /(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(\[([^\]]+)\]\(([^)]+)\))|(`([^`]+)`)|([^*`[\]]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[2]) runs.push({ text: m[2], bold: true });
+    else if (m[4]) runs.push({ text: m[4], italic: true });
+    else if (m[6] && m[7]) runs.push({ text: m[6], href: m[7] });
+    else if (m[9]) runs.push({ text: m[9], code: true });
+    else if (m[10]) runs.push({ text: m[10] });
+  }
+  if (!runs.length && text) runs.push({ text });
+  return runs;
 }

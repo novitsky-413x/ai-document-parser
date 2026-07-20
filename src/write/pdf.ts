@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jsPDF } from 'jspdf';
-import { ensureParentDir } from '../utils/paths.js';
+import { ensureParentDir, writeFileAtomic } from '../utils/paths.js';
 import { wrapError } from '../utils/errors.js';
 
 const PDF_FONT = 'DejaVuSans';
@@ -74,7 +73,7 @@ export async function writePdf(
 
     const buffer = Buffer.from(doc.output('arraybuffer'));
     await ensureParentDir(filePath);
-    await writeFile(filePath, buffer);
+    await writeFileAtomic(filePath, buffer);
     return { message: `Created PDF: ${filePath} (${lines.length} line(s))` };
   } catch (err) {
     throw wrapError('WRITE_FAILED', `Failed to write pdf ${filePath}`, err);

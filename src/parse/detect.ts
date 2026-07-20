@@ -1,7 +1,10 @@
-import JSZip from 'jszip';
+import type JSZip from 'jszip';
 import { DocumentError } from '../utils/errors.js';
 import { extOf } from '../utils/paths.js';
+import { stripBom } from '../utils/text.js';
+import { loadZipBuffer } from '../utils/zip.js';
 import { CORE_FORMATS_HELP, CORE_PARSE_FORMAT_SET } from './formats.js';
+import { detectOdfKind } from './odf.js';
 
 export type DetectedFormat =
   | 'docx'
@@ -13,6 +16,11 @@ export type DetectedFormat =
   | 'csv'
   | 'doc'
   | 'pptx'
+  | 'odt'
+  | 'ods'
+  | 'odp'
+  | 'rtf'
+  | 'epub'
   | 'unknown';
 
 const EXT_MAP: Record<string, DetectedFormat> = {
@@ -27,16 +35,14 @@ const EXT_MAP: Record<string, DetectedFormat> = {
   '.htm': 'html',
   '.csv': 'csv',
   '.doc': 'doc',
+  '.odt': 'odt',
+  '.ods': 'ods',
+  '.odp': 'odp',
+  '.rtf': 'rtf',
+  '.epub': 'epub',
 };
 
-const UNSUPPORTED_EXT = new Set([
-  '.ppt',
-  '.odt',
-  '.ods',
-  '.odp',
-  '.rtf',
-  '.epub',
-]);
+const UNSUPPORTED_EXT = new Set(['.ppt']);
 
 export function formatFromExt(filePath: string | undefined): DetectedFormat | null {
   if (!filePath) return null;
@@ -51,13 +57,21 @@ export function formatFromExt(filePath: string | undefined): DetectedFormat | nu
 }
 
 function detectTextFormat(sample: string): DetectedFormat {
-  if (/^\s*</.test(sample)) return 'html';
-  if (sample.includes(',') && !sample.includes('<')) return 'csv';
+  const trimmed = sample.trimStart();
+  if (/^\s*</.test(trimmed)) return 'html';
+  if (/^#{1,6}\s/.test(trimmed)) return 'md';
+  if (/^[\w-]+,[\w-]+(?:,[\w-]+)+\s*$/m.test(sample.slice(0, 400)) && !trimmed.startsWith('<'))
+    return 'csv';
   return 'md';
 }
 
 export function isZipBuffer(buf: Buffer): boolean {
   return buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x4b;
+}
+
+/** OLE CFB directory entries store stream names as UTF-16LE. */
+function cfbHasStream(buf: Buffer, streamName: string): boolean {
+  return buf.includes(Buffer.from(streamName, 'utf16le'));
 }
 
 /**
@@ -78,10 +92,15 @@ export function detectFormatFromBuffer(buf: Buffer): DetectedFormat | null {
     buf[2] === 0x11 &&
     buf[3] === 0xe0
   ) {
+    // Same magic for legacy Word and Excel; distinguish by CFB stream names.
+    if (cfbHasStream(buf, 'WordDocument')) return 'doc';
+    if (cfbHasStream(buf, 'Workbook') || cfbHasStream(buf, 'Book')) return 'xls';
     return 'doc';
   }
   if (buf.length === 0) return null;
-  return detectTextFormat(buf.slice(0, 200).toString('utf8'));
+  const sample = stripBom(buf.slice(0, 200).toString('utf8'));
+  if (/^\s*\{\\rtf/i.test(sample)) return 'rtf';
+  return detectTextFormat(sample);
 }
 
 /**
@@ -90,17 +109,24 @@ export function detectFormatFromBuffer(buf: Buffer): DetectedFormat | null {
  */
 export async function refineZipFormat(buf: Buffer): Promise<DetectedFormat> {
   try {
-    const zip = await JSZip.loadAsync(buf);
+    const zip = await loadZipBuffer(buf);
+    const odf = await detectOdfKind(buf);
+    if (odf) return odf;
     if (zip.file('ppt/presentation.xml') || hasSlidePart(zip)) return 'pptx';
     if (zip.file('xl/workbook.xml')) return 'xlsx';
     if (zip.file('word/document.xml')) return 'docx';
+    if (zip.file('META-INF/container.xml')) return 'epub';
 
     const ct = zip.file('[Content_Types].xml');
     if (ct) {
       const xml = await ct.async('string');
+      if (/epub\+zip/i.test(xml)) return 'epub';
       if (/presentationml/i.test(xml) || /\/ppt\//i.test(xml)) return 'pptx';
       if (/spreadsheetml/i.test(xml) || /\/xl\//i.test(xml)) return 'xlsx';
       if (/wordprocessingml/i.test(xml) || /\/word\//i.test(xml)) return 'docx';
+      if (/opendocument\.text/i.test(xml)) return 'odt';
+      if (/opendocument\.spreadsheet/i.test(xml)) return 'ods';
+      if (/opendocument\.presentation/i.test(xml)) return 'odp';
     }
   } catch {
     /* fall through */
@@ -116,7 +142,9 @@ function hasSlidePart(zip: JSZip): boolean {
 
 /** Detect format for a raw string that is not a filesystem path. */
 export function detectFormatFromText(text: string): DetectedFormat {
-  return detectTextFormat(text.slice(0, 200));
+  const sample = stripBom(text).slice(0, 200);
+  if (/^\s*\{\\rtf/i.test(sample)) return 'rtf';
+  return detectTextFormat(sample);
 }
 
 export function assertSupportedParse(format: string): void {
