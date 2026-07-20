@@ -1,4 +1,5 @@
 import {
+  BorderStyle,
   Document,
   ExternalHyperlink,
   HeadingLevel,
@@ -9,11 +10,24 @@ import {
   TableCell,
   TableRow,
   TextRun,
+  WidthType,
 } from 'docx';
-import type { CanonicalFlowBlock, CanonicalInline } from '../ir/types.js';
+import type { CanonicalFlowBlock, CanonicalInline, CanonicalTableCell } from '../ir/types.js';
+import { codeStyleId } from '../utils/code-style.js';
 
 const NUMBERING_REF = 'adp-ordered';
 const MAX_LIST_LEVEL = 8;
+const CODE_FONT = 'Consolas';
+/** Usable page width in twips (~A4 / Letter with ~1" margins). */
+const TABLE_WIDTH_DXA = 9026;
+
+const TABLE_BORDER = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
+const TABLE_BORDERS = {
+  top: TABLE_BORDER,
+  bottom: TABLE_BORDER,
+  left: TABLE_BORDER,
+  right: TABLE_BORDER,
+};
 
 function runsToChildren(runs: CanonicalInline[]): Array<TextRun | ExternalHyperlink> {
   return runs.map((r) => {
@@ -22,6 +36,7 @@ function runsToChildren(runs: CanonicalInline[]): Array<TextRun | ExternalHyperl
       bold: r.bold,
       italics: r.italic,
       strike: r.strike,
+      ...(r.code ? { font: CODE_FONT } : {}),
       ...(r.href ? { style: 'Hyperlink' } : {}),
     });
     if (r.href) {
@@ -80,13 +95,12 @@ export async function writeDocxFromBlocks(
     } else if (b.type === 'paragraph') {
       children.push(new Paragraph({ children: runsToChildren(b.runs) }));
     } else if (b.type === 'code') {
-      for (const line of b.text.split('\n')) {
-        children.push(
-          new Paragraph({
-            children: [new TextRun({ text: line, font: 'Consolas' })],
-          })
-        );
-      }
+      children.push(
+        new Paragraph({
+          style: codeStyleId(b.language),
+          children: codeLineRuns(b.text),
+        })
+      );
     } else if (b.type === 'thematic_break') {
       children.push(
         new Paragraph({
@@ -105,31 +119,25 @@ export async function writeDocxFromBlocks(
         }
       }
     } else if (b.type === 'table') {
-      children.push(
-        new Table({
-          rows: b.rows.map(
-            (row) =>
-              new TableRow({
-                children: row.map(
-                  (cell) =>
-                    new TableCell({
-                      children: [
-                        new Paragraph({
-                          children: [new TextRun(cell.text || ' ')],
-                        }),
-                      ],
-                    })
-                ),
-              })
-          ),
-        })
-      );
+      children.push(tableFromCanonical(b));
     } else if (b.type === 'list') {
       listToParagraphs(b, 0, children);
     }
   }
 
+  const codeStyles = collectCodeStyles(blocks);
   const doc = new Document({
+    styles: {
+      paragraphStyles: codeStyles.map((id) => ({
+        id,
+        name: id === 'ADPCode' ? 'ADP Code' : id.replace(/^ADPCode_/, 'ADP Code '),
+        basedOn: 'Normal',
+        next: 'Normal',
+        quickStyle: true,
+        run: { font: CODE_FONT, size: 20 },
+        paragraph: { shading: { type: 'clear' as const, fill: 'F5F5F5' } },
+      })),
+    },
     numbering: {
       config: [
         {
@@ -146,4 +154,71 @@ export async function writeDocxFromBlocks(
     sections: [{ children: children.length ? children : [new Paragraph(' ')] }],
   });
   return Packer.toBuffer(doc);
+}
+
+function collectCodeStyles(blocks: CanonicalFlowBlock[]): string[] {
+  const ids = new Set<string>(['ADPCode']);
+  const walk = (list: CanonicalFlowBlock[]) => {
+    for (const b of list) {
+      if (b.type === 'code') ids.add(codeStyleId(b.language));
+      else if (b.type === 'blockquote') walk(b.blocks);
+      else if (b.type === 'list') {
+        for (const item of b.items) walk(item);
+      }
+    }
+  };
+  walk(blocks);
+  return [...ids];
+}
+
+function codeLineRuns(text: string): TextRun[] {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const runs: TextRun[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) runs.push(new TextRun({ break: 1 }));
+    runs.push(new TextRun({ text: lines[i], font: CODE_FONT }));
+  }
+  if (!runs.length) runs.push(new TextRun({ text: ' ', font: CODE_FONT }));
+  return runs;
+}
+
+function tableFromCanonical(
+  block: Extract<CanonicalFlowBlock, { type: 'table' }>
+): Table {
+  const colCount = Math.max(1, ...block.rows.map((r) => r.length));
+  const colWidth = Math.max(1, Math.floor(TABLE_WIDTH_DXA / colCount));
+  const columnWidths = Array.from({ length: colCount }, () => colWidth);
+
+  return new Table({
+    width: { size: TABLE_WIDTH_DXA, type: WidthType.DXA },
+    columnWidths,
+    rows: block.rows.map((row) => {
+      const cells = padRow(row, colCount);
+      return new TableRow({
+        children: cells.map(
+          (cell) =>
+            new TableCell({
+              borders: TABLE_BORDERS,
+              width: { size: colWidth, type: WidthType.DXA },
+              children: [
+                new Paragraph({
+                  children: cellChildren(cell),
+                }),
+              ],
+            })
+        ),
+      });
+    }),
+  });
+}
+
+function padRow(row: CanonicalTableCell[], colCount: number): CanonicalTableCell[] {
+  const cells = row.slice(0, colCount);
+  while (cells.length < colCount) cells.push({ text: '' });
+  return cells;
+}
+
+function cellChildren(cell: CanonicalTableCell): Array<TextRun | ExternalHyperlink> {
+  if (cell.runs?.length) return runsToChildren(cell.runs);
+  return [new TextRun({ text: cell.text || ' ' })];
 }

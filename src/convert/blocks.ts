@@ -246,7 +246,9 @@ export function emitHtmlFromBlocks(blocks: ContentBlock[]): string {
     } else if (b.type === 'thematic_break') {
       parts.push('<hr />');
     } else if (b.type === 'code') {
-      parts.push(`<pre><code>${escapeHtml(b.text)}</code></pre>`);
+      const lang = (b.language ?? '').replace(/[^A-Za-z0-9_+-]/g, '');
+      const langAttr = lang ? ` class="language-${lang}"` : '';
+      parts.push(`<pre><code${langAttr}>${escapeHtml(b.text)}</code></pre>`);
     }
   }
   closeAll();

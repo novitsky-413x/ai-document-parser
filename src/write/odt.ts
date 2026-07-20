@@ -1,20 +1,30 @@
 import JSZip from 'jszip';
 import type { CanonicalFlowBlock, CanonicalInline } from '../ir/types.js';
+import { codeStyleId } from '../utils/code-style.js';
 import { escapeXml } from '../utils/xml.js';
+import { sanitizeHref } from '../utils/url.js';
 
 function runsToOdfXml(runs: CanonicalInline[]): string {
   return runs
     .map((r) => {
-      const text = escapeXml(r.text);
-      if (r.bold && r.italic) return `<text:span text:style-name="ADPBI">${text}</text:span>`;
-      if (r.bold) return `<text:span text:style-name="ADPB">${text}</text:span>`;
-      if (r.italic) return `<text:span text:style-name="ADPI">${text}</text:span>`;
+      let text = escapeXml(r.text);
+      if (r.code) text = `<text:span text:style-name="ADPCodeInline">${text}</text:span>`;
+      if (r.bold && r.italic) text = `<text:span text:style-name="ADPBI">${text}</text:span>`;
+      else if (r.bold) text = `<text:span text:style-name="ADPB">${text}</text:span>`;
+      else if (r.italic) text = `<text:span text:style-name="ADPI">${text}</text:span>`;
+      if (r.strike) text = `<text:span text:style-name="ADPS">${text}</text:span>`;
+      if (r.href) {
+        const safe = sanitizeHref(r.href);
+        if (safe) {
+          text = `<text:a xlink:href="${escapeXml(safe)}">${text}</text:a>`;
+        }
+      }
       return text;
     })
     .join('');
 }
 
-type OdfCtx = { tables: number };
+type OdfCtx = { tables: number; codeStyles: Set<string> };
 
 function blockToOdfXml(block: CanonicalFlowBlock, ctx: OdfCtx): string {
   if (block.type === 'heading') {
@@ -24,10 +34,14 @@ function blockToOdfXml(block: CanonicalFlowBlock, ctx: OdfCtx): string {
     return `<text:p>${runsToOdfXml(block.runs)}</text:p>`;
   }
   if (block.type === 'code') {
-    return block.text
+    const style = codeStyleId(block.language);
+    ctx.codeStyles.add(style);
+    const inner = block.text
+      .replace(/\r\n/g, '\n')
       .split('\n')
-      .map((line) => `<text:p>${escapeXml(line)}</text:p>`)
-      .join('');
+      .map((line) => escapeXml(line))
+      .join('<text:line-break/>');
+    return `<text:p text:style-name="${escapeXml(style)}">${inner}</text:p>`;
   }
   if (block.type === 'thematic_break') {
     return '<text:p/>';
@@ -72,7 +86,16 @@ function blockToOdfXml(block: CanonicalFlowBlock, ctx: OdfCtx): string {
   return '';
 }
 
-const CONTENT_STYLES = `<office:automatic-styles>
+function codeParagraphStyleXml(styleName: string): string {
+  return `<style:style style:name="${escapeXml(styleName)}" style:family="paragraph">
+    <style:paragraph-properties fo:background-color="#f5f5f5"/>
+    <style:text-properties style:font-name="Courier New" fo:font-family="Courier New" fo:font-size="10pt"/>
+  </style:style>`;
+}
+
+function buildContentStyles(codeStyles: Set<string>): string {
+  const codeDefs = [...codeStyles].map(codeParagraphStyleXml).join('\n  ');
+  return `<office:automatic-styles>
   <text:list-style style:name="ADPBullet">
     <text:list-level-style-bullet text:level="1" text:bullet-char="•"/>
     <text:list-level-style-bullet text:level="2" text:bullet-char="◦"/>
@@ -86,16 +109,21 @@ const CONTENT_STYLES = `<office:automatic-styles>
   <style:style style:name="ADPB" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>
   <style:style style:name="ADPI" style:family="text"><style:text-properties fo:font-style="italic"/></style:style>
   <style:style style:name="ADPBI" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style>
+  <style:style style:name="ADPS" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style>
+  <style:style style:name="ADPCodeInline" style:family="text"><style:text-properties style:font-name="Courier New" fo:font-family="Courier New" fo:font-size="10pt"/></style:style>
+  ${codeDefs}
 </office:automatic-styles>`;
+}
 
 const ODF_NS = `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
  xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
  xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
- xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"`;
+ xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+ xmlns:xlink="http://www.w3.org/1999/xlink"`;
 
 export async function writeOdtFromBlocks(blocks: CanonicalFlowBlock[]): Promise<Buffer> {
-  const ctx: OdfCtx = { tables: 0 };
+  const ctx: OdfCtx = { tables: 0, codeStyles: new Set(['ADPCode']) };
   const body = blocks.map((b) => blockToOdfXml(b, ctx)).join('');
   const zip = new JSZip();
   zip.file('mimetype', 'application/vnd.oasis.opendocument.text', { compression: 'STORE' });
@@ -103,7 +131,7 @@ export async function writeOdtFromBlocks(blocks: CanonicalFlowBlock[]): Promise<
     'content.xml',
     `<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content ${ODF_NS} office:version="1.2">
-  ${CONTENT_STYLES}
+  ${buildContentStyles(ctx.codeStyles)}
   <office:body><office:text>${body}</office:text></office:body>
 </office:document-content>`
   );

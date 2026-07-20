@@ -27,28 +27,28 @@ const slides = await convertDocument('deck.pptx', 'md'); // ## Slide N …
 
 // Surgical edit
 await editDocument('contract.docx', {
-  type: 'docx',
-  op: 'replace',
-  oldString: 'Acme Corp',
-  newString: 'Beta LLC',
+    type: 'docx',
+    op: 'replace',
+    oldString: 'Acme Corp',
+    newString: 'Beta LLC',
 });
 
 await editDocument('budget.xlsx', {
-  type: 'spreadsheet',
-  op: 'patchCells',
-  updates: [{ sheet: 'Q1', cell: 'B2', value: 1500 }],
+    type: 'spreadsheet',
+    op: 'patchCells',
+    updates: [{ sheet: 'Q1', cell: 'B2', value: 1500 }],
 });
 
 // Create
 await writeDocument('memo.docx', {
-  type: 'docx',
-  content: 'Paragraph one\nParagraph two',
+    type: 'docx',
+    content: 'Paragraph one\nParagraph two',
 });
 
 await writeDocument('out.pdf', {
-  type: 'pdf',
-  content: 'Текст с кириллицей',
-  title: 'Отчёт',
+    type: 'pdf',
+    content: 'Текст с кириллицей',
+    title: 'Отчёт',
 });
 ```
 
@@ -62,20 +62,20 @@ For read-only formats (pptx, pdf, md, …) prefer `convertDocument` → `md` / `
 
 See [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
 
-## Format matrix (v0.1)
+## Format matrix (v0.2)
 
-| Format | Parse | Convert | Edit | Write |
-|--------|-------|---------|------|-------|
-| docx | yes | md/html/text/chunks/docx/odt/rtf/epub | replace/append | yes |
-| xlsx / xls | yes | csv/md/html/text/chunks | cell patch | yes |
-| pptx | yes | md/html/text/chunks | — | — |
-| pdf | text | md/html/text/chunks | — | plain text |
-| md / html / csv | yes | md/html/text/csv/chunks/docx/odt/rtf/epub | — | — |
-| legacy .doc | heuristic | md/html/text/chunks/docx/odt/rtf/epub | — | via convertDocToDocx |
-| odt | yes | md/html/text/chunks/docx/odt/rtf/epub | — | yes |
-| ods / odp | yes | csv (ods) / md/html/text/chunks | — | — |
-| rtf / epub | yes | md/html/text/chunks/docx/odt/rtf/epub | — | yes |
-| legacy .ppt | — | — | — | — |
+| Format          | Parse     | Convert                                   | Edit           | Write                |
+| --------------- | --------- | ----------------------------------------- | -------------- | -------------------- |
+| docx            | yes       | md/html/text/chunks/docx/odt/rtf/epub     | replace/append | yes                  |
+| xlsx / xls      | yes       | csv/md/html/text/chunks                   | cell patch     | yes                  |
+| pptx            | yes       | md/html/text/chunks                       | —              | —                    |
+| pdf             | text      | md/html/text/chunks                       | —              | plain text           |
+| md / html / csv | yes       | md/html/text/csv/chunks/docx/odt/rtf/epub | —              | —                    |
+| legacy .doc     | heuristic | md/html/text/chunks/docx/odt/rtf/epub     | —              | via convertDocToDocx |
+| odt             | yes       | md/html/text/chunks/docx/odt/rtf/epub     | —              | yes                  |
+| ods / odp       | yes       | csv (ods) / md/html/text/chunks           | —              | —                    |
+| rtf / epub      | yes       | md/html/text/chunks/docx/odt/rtf/epub     | —              | yes                  |
+| legacy .ppt     | —         | —                                         | —              | —                    |
 
 Notes:
 

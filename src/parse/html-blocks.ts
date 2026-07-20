@@ -11,32 +11,83 @@ function decodeEntities(s: string): string {
     .replace(/&amp;/gi, '&');
 }
 
+/** Find the end index (exclusive) of a balanced HTML element starting at `start`. */
+function findBalancedHtmlEnd(html: string, start: number): number {
+  const open = /^<([A-Za-z][\w:-]*)\b[^>]*>/.exec(html.slice(start));
+  if (!open) return -1;
+  const tag = open[1].toLowerCase();
+  if (/\/>$/.test(open[0]) || /^(br|hr|img|meta|link|input)$/i.test(tag)) {
+    return start + open[0].length;
+  }
+  const openRe = new RegExp(`<${tag}\\b[^>]*>`, 'gi');
+  const closeRe = new RegExp(`</${tag}\\s*>`, 'gi');
+  let depth = 0;
+  let i = start;
+  while (i < html.length) {
+    openRe.lastIndex = i;
+    closeRe.lastIndex = i;
+    const om = openRe.exec(html);
+    const cm = closeRe.exec(html);
+    const oAt = om ? om.index : -1;
+    const cAt = cm ? cm.index : -1;
+    if (oAt < 0 && cAt < 0) return -1;
+    if (oAt >= 0 && (cAt < 0 || oAt < cAt)) {
+      const selfClosing = /\/>$/.test(om![0]);
+      if (!selfClosing) depth++;
+      i = oAt + om![0].length;
+    } else {
+      depth--;
+      i = cAt + cm![0].length;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function indexOfNextBlockTag(html: string, from: number): number {
+  const re = /<(h[1-6]|p|ul|ol|table|pre|hr|blockquote)\b/gi;
+  re.lastIndex = from;
+  const m = re.exec(html);
+  return m ? m.index : -1;
+}
+
 function parseInline(html: string): InlineRun[] {
   const runs: InlineRun[] = [];
+  // Prefer specific inline tags; fall back to text nodes.
   const re =
-    /<(strong|b)(\s[^>]*)?>((?:[\s\S]*?))<\/\1>|<(em|i)(\s[^>]*)?>((?:[\s\S]*?))<\/\4>|([^<]+)/gi;
+    /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>|<code\b[^>]*>([\s\S]*?)<\/code>|<(strong|b)(\s[^>]*)?>((?:[\s\S]*?))<\/\4>|<(em|i)(\s[^>]*)?>((?:[\s\S]*?))<\/\7>|<(s|strike|del)(\s[^>]*)?>((?:[\s\S]*?))<\/\10>|([^<]+)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
-    if (m[1]) {
-      const inner = m[3];
-      // Nested em/i inside strong/b
+    if (m[1] != null && m[2] != null) {
+      const text = decodeEntities(m[2].replace(/<[^>]+>/g, ''));
+      if (text) runs.push({ text, href: decodeEntities(m[1]) });
+    } else if (m[3] != null) {
+      const text = decodeEntities(m[3].replace(/<[^>]+>/g, ''));
+      if (text) runs.push({ text, code: true });
+    } else if (m[4]) {
+      const inner = m[6];
       const nested = /<(em|i)(\s[^>]*)?>([\s\S]*?)<\/\1>/i.exec(inner);
       if (nested) {
         const before = decodeEntities(inner.slice(0, nested.index).replace(/<[^>]+>/g, ''));
         if (before) runs.push({ text: before, bold: true });
         const mid = decodeEntities(nested[3].replace(/<[^>]+>/g, ''));
         if (mid) runs.push({ text: mid, bold: true, italic: true });
-        const after = decodeEntities(inner.slice(nested.index + nested[0].length).replace(/<[^>]+>/g, ''));
+        const after = decodeEntities(
+          inner.slice(nested.index + nested[0].length).replace(/<[^>]+>/g, '')
+        );
         if (after) runs.push({ text: after, bold: true });
       } else {
         const text = decodeEntities(inner.replace(/<[^>]+>/g, ''));
         if (text) runs.push({ text, bold: true });
       }
-    } else if (m[4]) {
-      const text = decodeEntities(m[6].replace(/<[^>]+>/g, ''));
-      if (text) runs.push({ text, italic: true });
     } else if (m[7]) {
-      const t = decodeEntities(m[7]);
+      const text = decodeEntities(m[9].replace(/<[^>]+>/g, ''));
+      if (text) runs.push({ text, italic: true });
+    } else if (m[10]) {
+      const text = decodeEntities(m[12].replace(/<[^>]+>/g, ''));
+      if (text) runs.push({ text, strike: true });
+    } else if (m[13]) {
+      const t = decodeEntities(m[13]);
       if (t) runs.push({ text: t });
     }
   }
@@ -63,6 +114,70 @@ function parseTableHtml(tableHtml: string): ContentBlock {
   return { type: 'table', rows };
 }
 
+function extractCodeLanguage(preOpen: string, codeOpen: string): string | undefined {
+  const fromClass =
+    /(?:^|\s)class=["'][^"']*\blanguage-([A-Za-z0-9_+-]+)/i.exec(codeOpen)?.[1] ??
+    /(?:^|\s)class=["'][^"']*\blanguage-([A-Za-z0-9_+-]+)/i.exec(preOpen)?.[1];
+  return fromClass || undefined;
+}
+
+function parseListHtml(
+  listHtml: string,
+  depth: number,
+  ordered: boolean
+): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+  const inner = listHtml.replace(/^<(ul|ol)\b[^>]*>/i, '').replace(/<\/(ul|ol)\s*>$/i, '');
+  let i = 0;
+  while (i < inner.length) {
+    const liAt = inner.toLowerCase().indexOf('<li', i);
+    if (liAt < 0) break;
+    const after = inner.charAt(liAt + 3);
+    if (after && !/[\s/>]/.test(after)) {
+      i = liAt + 3;
+      continue;
+    }
+    const end = findBalancedHtmlEnd(inner, liAt);
+    if (end < 0) {
+      i = liAt + 3;
+      continue;
+    }
+    const itemXml = inner.slice(liAt, end);
+    const openEnd = itemXml.indexOf('>') + 1;
+    let body = itemXml.slice(openEnd).replace(/<\/li\s*>$/i, '');
+
+    // Nested lists inside this item.
+    const nestedBlocks: ContentBlock[] = [];
+    const nestedRe = /<(ul|ol)\b/gi;
+    let nm: RegExpExecArray | null;
+    let cursor = 0;
+    const textParts: string[] = [];
+    while ((nm = nestedRe.exec(body)) !== null) {
+      textParts.push(body.slice(cursor, nm.index));
+      const nEnd = findBalancedHtmlEnd(body, nm.index);
+      if (nEnd < 0) break;
+      const nestedXml = body.slice(nm.index, nEnd);
+      const isOl = /^<ol\b/i.test(nestedXml);
+      nestedBlocks.push(...parseListHtml(nestedXml, depth + 1, isOl));
+      cursor = nEnd;
+      nestedRe.lastIndex = nEnd;
+    }
+    textParts.push(body.slice(cursor));
+    const runs = parseInline(textParts.join(''));
+    if (runsToText(runs).trim() || !nestedBlocks.length) {
+      blocks.push({
+        type: 'list_item',
+        level: depth,
+        ...(ordered ? { ordered: true } : {}),
+        runs: runs.length ? runs : [{ text: ' ' }],
+      });
+    }
+    blocks.push(...nestedBlocks);
+    i = end;
+  }
+  return blocks;
+}
+
 /**
  * Convert HTML snippet into ContentBlocks (structural convert path).
  */
@@ -73,58 +188,79 @@ export function htmlToBlocks(html: string): ContentBlock[] {
     .replace(/<style[\s\S]*?<\/style>/gi, '');
 
   const blocks: ContentBlock[] = [];
-  const re =
-    /<(h([1-6]))\b[^>]*>([\s\S]*?)<\/\1>|<p\b[^>]*>([\s\S]*?)<\/p>|<li\b[^>]*>([\s\S]*?)<\/li>|<table\b[^>]*>([\s\S]*?)<\/table>|<hr\s*\/?>|<pre\b[^>]*>([\s\S]*?)<\/pre>|<ul\b[^>]*>([\s\S]*?)<\/ul>|<ol\b[^>]*>([\s\S]*?)<\/ol>/gi;
-
-  let m: RegExpExecArray | null;
-  let last = 0;
+  let i = 0;
   const pushLoose = (chunk: string) => {
     const plain = decodeEntities(chunk.replace(/<[^>]+>/g, '')).trim();
     if (plain) blocks.push({ type: 'paragraph', runs: [{ text: plain }] });
   };
 
-  while ((m = re.exec(normalized)) !== null) {
-    if (m.index > last) pushLoose(normalized.slice(last, m.index));
-    last = m.index + m[0].length;
+  while (i < normalized.length) {
+    const at = indexOfNextBlockTag(normalized, i);
+    if (at < 0) {
+      pushLoose(normalized.slice(i));
+      break;
+    }
+    if (at > i) pushLoose(normalized.slice(i, at));
 
-    if (m[2]) {
-      const level = Number(m[2]) as 1 | 2 | 3 | 4 | 5 | 6;
-      blocks.push({ type: 'heading', level, runs: parseInline(m[3]) });
-    } else if (m[4] != null && m[0].toLowerCase().startsWith('<p')) {
-      const runs = parseInline(m[4]);
-      if (runsToText(runs).trim()) blocks.push({ type: 'paragraph', runs });
-    } else if (m[5] != null && /<li/i.test(m[0])) {
-      blocks.push({ type: 'list_item', level: 0, runs: parseInline(m[5]) });
-    } else if (m[6] != null && /<table/i.test(m[0])) {
-      const table = parseTableHtml(m[0]);
-      if (table.type === 'table' && table.rows.length) blocks.push(table);
-    } else if (/^<hr/i.test(m[0])) {
+    const open = /^<([A-Za-z][\w:-]*)\b[^>]*>/i.exec(normalized.slice(at));
+    if (!open) {
+      i = at + 1;
+      continue;
+    }
+    const tag = open[1].toLowerCase();
+
+    if (tag === 'hr') {
       blocks.push({ type: 'thematic_break' });
-    } else if (m[7] != null && /<pre/i.test(m[0])) {
+      i = at + open[0].length;
+      continue;
+    }
+
+    const end = findBalancedHtmlEnd(normalized, at);
+    if (end < 0) {
+      i = at + open[0].length;
+      continue;
+    }
+    const el = normalized.slice(at, end);
+
+    if (/^h[1-6]$/.test(tag)) {
+      const level = Number(tag[1]) as 1 | 2 | 3 | 4 | 5 | 6;
+      const inner = el.replace(/^<h[1-6]\b[^>]*>/i, '').replace(/<\/h[1-6]\s*>$/i, '');
+      blocks.push({ type: 'heading', level, runs: parseInline(inner) });
+    } else if (tag === 'p') {
+      const inner = el.replace(/^<p\b[^>]*>/i, '').replace(/<\/p\s*>$/i, '');
+      const runs = parseInline(inner);
+      if (runsToText(runs).trim()) blocks.push({ type: 'paragraph', runs });
+    } else if (tag === 'table') {
+      const table = parseTableHtml(el);
+      if (table.type === 'table' && table.rows.length) blocks.push(table);
+    } else if (tag === 'pre') {
+      const preOpen = /^<pre\b[^>]*>/i.exec(el)?.[0] ?? '';
+      const codeOpen = /<code\b[^>]*>/i.exec(el)?.[0] ?? '';
+      const language = extractCodeLanguage(preOpen, codeOpen);
+      const inner = el
+        .replace(/^<pre\b[^>]*>/i, '')
+        .replace(/<\/pre\s*>$/i, '')
+        .replace(/^<code\b[^>]*>/i, '')
+        .replace(/<\/code\s*>$/i, '');
       blocks.push({
         type: 'code',
-        text: decodeEntities(m[7].replace(/<[^>]+>/g, '')),
+        text: decodeEntities(inner.replace(/<[^>]+>/g, '')),
+        ...(language ? { language } : {}),
       });
-    } else if (m[8] != null && /<ul/i.test(m[0])) {
-      const liRe = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-      let li: RegExpExecArray | null;
-      while ((li = liRe.exec(m[8])) !== null) {
-        blocks.push({ type: 'list_item', level: 0, runs: parseInline(li[1]) });
-      }
-    } else if (m[9] != null && /<ol/i.test(m[0])) {
-      const liRe = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
-      let li: RegExpExecArray | null;
-      while ((li = liRe.exec(m[9])) !== null) {
-        blocks.push({
-          type: 'list_item',
-          level: 0,
-          ordered: true,
-          runs: parseInline(li[1]),
-        });
+    } else if (tag === 'ul' || tag === 'ol') {
+      blocks.push(...parseListHtml(el, 0, tag === 'ol'));
+    } else if (tag === 'blockquote') {
+      const inner = el.replace(/^<blockquote\b[^>]*>/i, '').replace(/<\/blockquote\s*>$/i, '');
+      const nested = htmlToBlocks(inner);
+      if (nested.length) blocks.push(...nested);
+      else {
+        const runs = parseInline(inner);
+        if (runsToText(runs).trim()) blocks.push({ type: 'paragraph', runs });
       }
     }
+
+    i = end;
   }
-  if (last < normalized.length) pushLoose(normalized.slice(last));
 
   return blocks;
 }
@@ -165,7 +301,7 @@ export function markdownToBlocks(md: string): ContentBlock[] {
       blocks.push({
         type: 'heading',
         level: hm[1].length as 1 | 2 | 3 | 4 | 5 | 6,
-        runs: [{ text: hm[2] }],
+        runs: parseMarkdownInline(hm[2]),
       });
       i++;
       continue;
@@ -222,7 +358,11 @@ export function markdownToBlocks(md: string): ContentBlock[] {
     }
     const para: string[] = [line];
     i++;
-    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,6})\s+|^\s*[-*+]\s+|^\s*\||^```/.test(lines[i])) {
+    while (
+      i < lines.length &&
+      !/^\s*$/.test(lines[i]) &&
+      !/^(#{1,6})\s+|^\s*[-*+]\s+|^\s*\||^```/.test(lines[i])
+    ) {
       para.push(lines[i]);
       i++;
     }
@@ -231,19 +371,49 @@ export function markdownToBlocks(md: string): ContentBlock[] {
   return blocks;
 }
 
-/** Parse inline markdown emphasis/links/code in a paragraph string. */
+/**
+ * Parse inline markdown emphasis/links/code.
+ * Supports both *italic* / _italic_ and ~~strike~~ so emit↔parse stay aligned.
+ */
 export function parseMarkdownInline(text: string): InlineRun[] {
   const runs: InlineRun[] = [];
+  // Order: code, links, bold+italic combos, bold, strike, italic, plain.
   const re =
-    /(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(\[([^\]]+)\]\(([^)]+)\))|(`([^`]+)`)|([^*`[\]]+)/g;
+    /(`([^`]+)`)|(\[([^\]]+)\]\(([^)]+)\))|(\*\*_([^*]+)_\*\*)|(\*\*([^*]+)\*\*)|(~~([^~]+)~~)|(\*([^*]+)\*)|((?<!\w)_([^_]+)_(?!\w))|([^*`[~_\]]+|[_*~\[\]])/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    if (m[2]) runs.push({ text: m[2], bold: true });
-    else if (m[4]) runs.push({ text: m[4], italic: true });
-    else if (m[6] && m[7]) runs.push({ text: m[6], href: m[7] });
-    else if (m[9]) runs.push({ text: m[9], code: true });
-    else if (m[10]) runs.push({ text: m[10] });
+    if (m[2]) runs.push({ text: m[2], code: true });
+    else if (m[4] && m[5]) runs.push({ text: m[4], href: m[5] });
+    else if (m[7]) runs.push({ text: m[7], bold: true, italic: true });
+    else if (m[9]) runs.push({ text: m[9], bold: true });
+    else if (m[11]) runs.push({ text: m[11], strike: true });
+    else if (m[13]) runs.push({ text: m[13], italic: true });
+    else if (m[15]) runs.push({ text: m[15], italic: true });
+    else if (m[16]) runs.push({ text: m[16] });
   }
   if (!runs.length && text) runs.push({ text });
-  return runs;
+  return mergeAdjacentPlain(runs);
+}
+
+function mergeAdjacentPlain(runs: InlineRun[]): InlineRun[] {
+  if (runs.length < 2) return runs;
+  const out: InlineRun[] = [{ ...runs[0] }];
+  for (let i = 1; i < runs.length; i++) {
+    const prev = out[out.length - 1];
+    const cur = runs[i];
+    const plain =
+      !prev.bold &&
+      !prev.italic &&
+      !prev.strike &&
+      !prev.code &&
+      !prev.href &&
+      !cur.bold &&
+      !cur.italic &&
+      !cur.strike &&
+      !cur.code &&
+      !cur.href;
+    if (plain) prev.text += cur.text;
+    else out.push({ ...cur });
+  }
+  return out;
 }

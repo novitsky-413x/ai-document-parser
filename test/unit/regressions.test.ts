@@ -31,6 +31,29 @@ describe('markdown inline code', () => {
     assert.match(emitMarkdownFromBlocks(blocks), /`npm test`/);
     assert.match(emitHtmlFromBlocks(blocks), /<code>npm test<\/code>/);
   });
+
+  it('round-trips italic underscore and strike from emit', () => {
+    const md = emitMarkdownFromBlocks([
+      {
+        type: 'paragraph',
+        runs: [
+          { text: 'bold', bold: true },
+          { text: ' ' },
+          { text: 'italic', italic: true },
+          { text: ' ' },
+          { text: 'strike', strike: true },
+        ],
+      },
+    ]);
+    assert.match(md, /\*\*bold\*\*/);
+    assert.match(md, /_italic_/);
+    assert.match(md, /~~strike~~/);
+    const back = markdownToBlocks(md);
+    const runs = (back[0] as { runs: Array<{ text: string; bold?: boolean; italic?: boolean; strike?: boolean }> }).runs;
+    assert.equal(runs.find((r) => r.text === 'bold')?.bold, true);
+    assert.equal(runs.find((r) => r.text === 'italic')?.italic, true);
+    assert.equal(runs.find((r) => r.text === 'strike')?.strike, true);
+  });
 });
 
 describe('markdown emit escaping', () => {

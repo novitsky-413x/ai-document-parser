@@ -1,6 +1,7 @@
 import { DocumentError } from '../utils/errors.js';
 import type { ContentBlock, DocxStructured, InlineRun } from '../types.js';
 import { flattenBlocksToParagraphs } from '../convert/blocks.js';
+import { isMonospaceFont, parseCodeStyleId } from '../utils/code-style.js';
 import type JSZip from 'jszip';
 
 export type DocxPackageParts = {
@@ -339,9 +340,16 @@ function parseRunElement(
   const text = extractRunTexts(runXml);
   if (!text) return null;
   const flags = flagsFromRPr(runXml, charStyles);
+  const fonts = [
+    ...runXml.matchAll(/w:(?:ascii|hAnsi|cs)="([^"]+)"/g),
+    ...runXml.matchAll(/w:(?:ascii|hAnsi|cs)='([^']+)'/g),
+  ].map((m) => m[1]);
+  const code =
+    fonts.length > 0 && fonts.every((f) => isMonospaceFont(f)) ? true : undefined;
   return {
     text,
     ...flags,
+    ...(code ? { code: true } : {}),
     ...(href ? { href } : {}),
   };
 }
@@ -396,6 +404,34 @@ function paragraphStyleId(paraXml: string): string | undefined {
     /<w:pStyle\b[^>]*w:val="([^"]+)"/.exec(paraXml)?.[1] ??
     /<w:pStyle\b[^>]*w:val='([^']+)'/.exec(paraXml)?.[1]
   );
+}
+
+function codeParagraphMeta(paraXml: string): { isCode: boolean; language?: string } {
+  const fromStyle = parseCodeStyleId(paragraphStyleId(paraXml));
+  if (fromStyle.isCode) return fromStyle;
+  // Fallback for older emits that only set Consolas without ADPCode style.
+  if (isListItem(paraXml) || headingLevel(paraXml)) return { isCode: false };
+  if (!isMonospaceOnlyParagraph(paraXml)) return { isCode: false };
+  return { isCode: true };
+}
+
+function isMonospaceOnlyParagraph(paraXml: string): boolean {
+  const runRe = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
+  let m: RegExpExecArray | null;
+  let sawText = false;
+  while ((m = runRe.exec(paraXml)) !== null) {
+    const text = extractRunTexts(m[0]);
+    if (!text.trim()) continue;
+    sawText = true;
+    const fonts = [
+      ...m[0].matchAll(/w:(?:ascii|hAnsi|cs)="([^"]+)"/g),
+      ...m[0].matchAll(/w:(?:ascii|hAnsi|cs)='([^']+)'/g),
+    ].map((fm) => fm[1]);
+    // Runs without an explicit font use the theme/default face — not monospace.
+    if (!fonts.length) return false;
+    if (!fonts.every((f) => isMonospaceFont(f))) return false;
+  }
+  return sawText;
 }
 
 function headingLevel(paraXml: string): 1 | 2 | 3 | 4 | 5 | 6 | null {
@@ -541,6 +577,17 @@ type ParseCtx = {
 };
 
 function paraToBlock(paraXml: string, ctx: ParseCtx): ContentBlock | null {
+  const codeMeta = codeParagraphMeta(paraXml);
+  if (codeMeta.isCode) {
+    // Keep blank lines inside fenced code (do not trim to empty→null).
+    const text = extractRunTexts(paraXml).replace(/\r\n/g, '\n');
+    return {
+      type: 'code',
+      text,
+      ...(codeMeta.language ? { language: codeMeta.language } : {}),
+    };
+  }
+
   const runs = parseParagraphRuns(paraXml, ctx.charStyles, ctx.rels);
   // TOC: take text before tab (page number after)
   const tocLvl = tocLevel(paraXml);

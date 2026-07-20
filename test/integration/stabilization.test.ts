@@ -77,6 +77,26 @@ describe('ODT parse order and duplication', () => {
     assert.ok(md.indexOf('Intro') < md.indexOf('CellA'), 'intro before table');
     assert.ok(md.indexOf('CellA') < md.indexOf('After'), 'table before trailing paragraph');
   });
+
+  it('preserves nested bullet and ordered lists as markdown', async () => {
+    const file = path.join(dir, 'lists.odt');
+    await writeDocument(file, {
+      type: 'odt',
+      content: 'placeholder',
+    });
+    // Prefer convert from md so we get real ODT list markup from our writer.
+    const src = path.join(dir, 'lists.md');
+    writeFileSync(src, '- Alpha\n- Beta\n  - Nested\n\n1. One\n2. Two\n', 'utf8');
+    const odtBuf = (await convertDocument(src, 'odt')).value;
+    writeFileSync(file, odtBuf as Uint8Array);
+
+    const back = String((await convertDocument(file, 'md')).value);
+    assert.match(back, /- Alpha/);
+    assert.match(back, /- Beta/);
+    assert.match(back, /\n {2}- Nested/);
+    assert.match(back, /1\. One/);
+    assert.match(back, /1\. Two/);
+  });
 });
 
 describe('ODS repeated cells and typed values', () => {
@@ -150,6 +170,82 @@ describe('RTF escapes across style toggles', () => {
     const parsed = await parseDocument(file);
     assert.match(parsed.text, /café/);
     assert.match(parsed.text, /bold/);
+  });
+
+  it('emits unicode and code-block line breaks for md -> rtf', async () => {
+    const file = path.join(dir, 'md-rtf.md');
+    writeFileSync(file, 'Кириллица\n\n```ts\nline1\nline2\n```', 'utf8');
+    const rtf = String((await convertDocument(file, 'rtf')).value);
+    assert.match(rtf, /\\uc1/);
+    assert.match(rtf, /\\u[0-9-]+\?/);
+    assert.match(rtf, /line1\\line\{\}?line2/);
+  });
+
+  it('decodes \\uN? unicode dashes when converting rtf -> md', async () => {
+    const file = path.join(dir, 'dash.rtf');
+    writeFileSync(file, '{\\rtf1\\ansi\\uc1 A \\u8212? B \\u8211? C\\par}', 'utf8');
+    const md = String((await convertDocument(file, 'md')).value);
+    assert.match(md, /A — B – C/);
+    assert.doesNotMatch(md, /\?/);
+  });
+
+  it('preserves braces and backslashes inside code blocks on rtf -> md', async () => {
+    const file = path.join(dir, 'code-esc.md');
+    writeFileSync(
+      file,
+      '```ts\nconst path = "C:\\\\Users\\\\test";\nif (a) {\n  return b;\n}\n```\n',
+      'utf8'
+    );
+    const rtf = String((await convertDocument(file, 'rtf')).value);
+    const mid = path.join(dir, 'code-esc.rtf');
+    writeFileSync(mid, rtf, 'utf8');
+    const back = String((await convertDocument(mid, 'md')).value);
+    assert.match(back, /C:\\\\Users\\\\test/);
+    assert.match(back, /if \(a\) \{\n  return b;\n\}/);
+    assert.doesNotMatch(back, /if \(a\) \\/);
+  });
+
+  it('round-trips hyperlinks without raw HYPERLINK field junk', async () => {
+    const file = path.join(dir, 'links.md');
+    writeFileSync(
+      file,
+      'See [LICENSE](LICENSE) and [docs](https://example.com/docs).\n',
+      'utf8'
+    );
+    const rtf = String((await convertDocument(file, 'rtf')).value);
+    assert.match(rtf, /HYPERLINK/);
+    const mid = path.join(dir, 'links.rtf');
+    writeFileSync(mid, rtf, 'utf8');
+    const back = String((await convertDocument(mid, 'md')).value);
+    assert.match(back, /\[LICENSE\]\(LICENSE\)/);
+    assert.match(back, /\[docs\]\(https:\/\/example\.com\/docs\)/);
+    assert.doesNotMatch(back, /HYPERLINK/);
+    assert.doesNotMatch(back, /\{\{/);
+  });
+
+  it('preserves lists and tables from md -> rtf', async () => {
+    const file = path.join(dir, 'list-table.md');
+    writeFileSync(
+      file,
+      '- Alpha\n- Beta\n\n| H1 | H2 |\n| --- | --- |\n| a | b |\n',
+      'utf8'
+    );
+    const rtf = String((await convertDocument(file, 'rtf')).value);
+    assert.match(rtf, /\\adplist/);
+    assert.match(rtf, /Alpha/);
+    assert.match(rtf, /Beta/);
+    assert.match(rtf, /\\trowd/);
+    assert.match(rtf, /\\cell/);
+    assert.match(rtf, /H1/);
+    assert.match(rtf, /\\row/);
+
+    const mid = path.join(dir, 'list-table.rtf');
+    writeFileSync(mid, rtf, 'utf8');
+    const back = String((await convertDocument(mid, 'md')).value);
+    assert.match(back, /- Alpha/);
+    assert.match(back, /- Beta/);
+    assert.match(back, /\| H1 \| H2 \|/);
+    assert.match(back, /\| a \| b \|/);
   });
 });
 
@@ -336,6 +432,125 @@ describe('nested list conversion', () => {
     const html = String((await convertDocument(file, 'html')).value);
     assert.match(html, /<li>A\s*<ul>\s*<li>B\s*<\/li>\s*<\/ul>\s*<\/li>/);
   });
+
+  it('html nested lists round-trip to markdown with levels', async () => {
+    const file = path.join(dir, 'nested.html');
+    writeFileSync(
+      file,
+      '<ul><li>A<ul><li>B</li></ul></li><li>C</li></ul>',
+      'utf8'
+    );
+    const md = String((await convertDocument(file, 'md')).value);
+    assert.match(md, /- A/);
+    assert.match(md, /\n {2}- B/);
+    assert.match(md, /- C/);
+    assert.doesNotMatch(md, /ul>/);
+  });
+});
+
+describe('html / epub inline fidelity', () => {
+  it('preserves links, inline code, strike and code language', async () => {
+    const file = path.join(dir, 'inline.html');
+    writeFileSync(
+      file,
+      '<p>See <a href="https://example.com">here</a> and <code>x</code> and <s>old</s></p><pre><code class="language-ts">const n = 1;</code></pre>',
+      'utf8'
+    );
+    const md = String((await convertDocument(file, 'md')).value);
+    assert.match(md, /\[here\]\(https:\/\/example\.com\)/);
+    assert.match(md, /`x`/);
+    assert.match(md, /~~old~~/);
+    assert.match(md, /```ts\nconst n = 1;\n```/);
+  });
+
+  it('md → epub → md keeps nested lists and fenced language', async () => {
+    const file = path.join(dir, 'epub-round.md');
+    writeFileSync(file, '- A\n  - B\n\n```js\nok\n```\n\nUse `inline`.\n', 'utf8');
+    const epub = path.join(dir, 'epub-round.epub');
+    writeFileSync(epub, (await convertDocument(file, 'epub')).value as Uint8Array);
+    const back = String((await convertDocument(epub, 'md')).value);
+    assert.match(back, /- A/);
+    assert.match(back, /\n {2}- B/);
+    assert.match(back, /```js\nok\n```/);
+    assert.match(back, /`inline`/);
+  });
+});
+
+describe('inline code in office formats', () => {
+  it('md → docx → md keeps inline code', async () => {
+    const file = path.join(dir, 'inline-code.md');
+    writeFileSync(file, 'Run `npm test` now\n', 'utf8');
+    const docx = path.join(dir, 'inline-code.docx');
+    writeFileSync(docx, (await convertDocument(file, 'docx')).value as Uint8Array);
+    const back = String((await convertDocument(docx, 'md')).value);
+    assert.match(back, /`npm test`/);
+  });
+});
+
+describe('md → docx tables', () => {
+  it('writes tables with real widths and cell text', async () => {
+    const file = path.join(dir, 'tables.md');
+    writeFileSync(
+      file,
+      '| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| кириллица | x | y |\n',
+      'utf8'
+    );
+    const buf = (await convertDocument(file, 'docx')).value;
+    assert.ok(buf instanceof Uint8Array || Buffer.isBuffer(buf));
+
+    const zip = await JSZip.loadAsync(Buffer.from(buf as Uint8Array));
+    const xml = await zip.file('word/document.xml')!.async('string');
+    assert.match(xml, /<w:tbl>/);
+    assert.match(xml, /w:type="dxa"/);
+    assert.doesNotMatch(xml, /w:type="auto" w:w="100"/);
+    assert.match(xml, /<w:t[^>]*>A<\/w:t>/);
+    assert.match(xml, /<w:t[^>]*>кириллица<\/w:t>/);
+    assert.match(xml, /<w:tcW[^>]*w:w="\d{3,}"/);
+
+    const parsed = await parseDocument(Buffer.from(buf as Uint8Array), {
+      output: 'structured',
+    });
+    const blocks = (parsed.structured as { blocks: Array<{ type: string; rows?: string[][] }> })
+      .blocks;
+    const table = blocks.find((b) => b.type === 'table');
+    assert.ok(table?.rows);
+    assert.deepEqual(table!.rows![0], ['A', 'B', 'C']);
+    assert.deepEqual(table!.rows![1], ['1', '2', '3']);
+    assert.equal(table!.rows![2][0], 'кириллица');
+  });
+
+  it('pads short rows so every row has the same column count', async () => {
+    const file = path.join(dir, 'jagged.md');
+    writeFileSync(file, '| A | B | C |\n| --- | --- | --- |\n| only-one |\n', 'utf8');
+    const buf = (await convertDocument(file, 'docx')).value;
+    const zip = await JSZip.loadAsync(Buffer.from(buf as Uint8Array));
+    const xml = await zip.file('word/document.xml')!.async('string');
+    const rows = [...xml.matchAll(/<w:tr>[\s\S]*?<\/w:tr>/g)].map((m) => m[0]);
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      const cells = row.match(/<w:tc[\s>]/g) ?? [];
+      assert.equal(cells.length, 3, 'every row must have 3 cells');
+    }
+  });
+});
+
+describe('code block round-trip', () => {
+  const sample = 'Intro\n\n```ts\nconst x = 1;\nconst y = 2;\n```\n\nOutro\n';
+
+  for (const target of ['docx', 'odt', 'rtf'] as const) {
+    it(`md → ${target} → md keeps fenced code`, async () => {
+      const file = path.join(dir, `code-${target}.md`);
+      writeFileSync(file, sample, 'utf8');
+      const mid = (await convertDocument(file, target)).value;
+      const midPath = path.join(dir, `code-mid.${target}`);
+      writeFileSync(midPath, mid as string | NodeJS.ArrayBufferView);
+
+      const back = String((await convertDocument(midPath, 'md')).value);
+      assert.match(back, /```ts\nconst x = 1;\nconst y = 2;\n```/);
+      assert.match(back, /Intro/);
+      assert.match(back, /Outro/);
+    });
+  }
 });
 
 describe('CLI', () => {
