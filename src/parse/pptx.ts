@@ -70,6 +70,36 @@ function extractSlideTables(xml: string): ContentBlock[] {
   return blocks;
 }
 
+/** Detect DrawingML bullet / numbering on a paragraph (`buChar` / `buAutoNum`). */
+function detectPptxListMeta(paraXml: string): {
+  isList: boolean;
+  ordered: boolean;
+  level: number;
+} | null {
+  const pPr = /<a:pPr\b([^>]*)(?:\/>|>([\s\S]*?)<\/a:pPr>)/.exec(paraXml);
+  if (!pPr) return null;
+  const pPrInner = `${pPr[1] ?? ''}${pPr[2] ?? ''}`;
+  if (/<a:buNone\b/.test(pPrInner)) return null;
+
+  const ordered = /<a:buAutoNum\b/.test(pPrInner);
+  const bullet = /<a:buChar\b/.test(pPrInner);
+  if (!ordered && !bullet) return null;
+
+  let level = 0;
+  const lvlAttr = /\blvl="(\d+)"/.exec(pPrInner);
+  if (lvlAttr) {
+    level = Math.max(0, Number(lvlAttr[1]) || 0);
+  } else {
+    const marL = /\bmarL="(\d+)"/.exec(pPrInner);
+    if (marL) {
+      const emu = Number(marL[1]) || 0;
+      // Writer uses marL="342900" per indent step.
+      level = Math.max(0, Math.round(emu / 342900) - 1);
+    }
+  }
+  return { isList: true, ordered, level };
+}
+
 function extractSlideBlocks(xml: string, slideIndex: number): {
   texts: string[];
   blocks: ContentBlock[];
@@ -90,14 +120,24 @@ function extractSlideBlocks(xml: string, slideIndex: number): {
   let pm: RegExpExecArray | null;
   let paraIdx = 0;
   while ((pm = paraRegex.exec(withoutTables)) !== null) {
-    const runs = parsePptxRuns(pm[0]);
+    const paraXml = pm[0];
+    const runs = parsePptxRuns(paraXml);
     const line = runs.map((r) => r.text).join('').trim();
     if (!line) continue;
     texts.push(line);
-    if (paraIdx === 0) {
-      blocks.push({ type: 'heading', level: 3, runs: runs.length ? runs : [{ text: line }] });
+    const listMeta = detectPptxListMeta(paraXml);
+    const runPayload = runs.length ? runs : [{ text: line }];
+    if (listMeta?.isList) {
+      blocks.push({
+        type: 'list_item',
+        level: listMeta.level,
+        ordered: listMeta.ordered || undefined,
+        runs: runPayload,
+      });
+    } else if (paraIdx === 0) {
+      blocks.push({ type: 'heading', level: 3, runs: runPayload });
     } else {
-      blocks.push({ type: 'paragraph', runs: runs.length ? runs : [{ text: line }] });
+      blocks.push({ type: 'paragraph', runs: runPayload });
     }
     paraIdx++;
   }

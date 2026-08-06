@@ -58,8 +58,15 @@ export async function convertDocument(
   to: ConvertFormat | string,
   options: ConvertOptions = {}
 ): Promise<ConvertResult> {
-  const dest = FORMAT_MAP[String(to).toLowerCase()];
+  const rawTarget = String(to).toLowerCase();
+  const dest = FORMAT_MAP[rawTarget];
   if (!dest) {
+    if (rawTarget === 'pptx' || rawTarget === 'odp') {
+      throw new DocumentError(
+        'UNSUPPORTED_FORMAT',
+        `Convert target '${to}' is not supported by design. Create presentations with writeDocument({ type: 'pptx', … }); convert from pptx/odp only to md|html|text|chunks.`
+      );
+    }
     throw new DocumentError(
       'UNSUPPORTED_FORMAT',
       `Unsupported convert target: ${to}`
@@ -70,7 +77,7 @@ export async function convertDocument(
     if (dest === 'pdf') {
       throw new DocumentError(
         'UNSUPPORTED_FORMAT',
-        'Convert to PDF is not supported in core. Use writeDocument for plain-text PDF creation.'
+        'Convert to PDF is not supported by design. Use writeDocument({ type: \'pdf\', … }) for plain-text PDF creation — not convertDocument.'
       );
     }
 
@@ -85,9 +92,13 @@ export async function convertDocument(
     const parsed = await parseDocument(input, { output: 'structured' });
     const allowed = allowedConvertTargets(parsed.format);
     if (!allowed.includes(dest as typeof allowed[number])) {
+      const presentationHint =
+        parsed.format === 'pptx' || parsed.format === 'odp'
+          ? ` Presentation→flow Office (e.g. ${parsed.format}→docx) is unsupported by design — convert to md|html|text|chunks, or recreate flow docs with writeDocument.`
+          : '';
       throw new DocumentError(
         'UNSUPPORTED_FORMAT',
-        `Cannot convert ${parsed.format} to ${dest}. Allowed: ${allowed.join(', ')}`
+        `Cannot convert ${parsed.format} to ${dest}. Allowed: ${allowed.join(', ')}.${presentationHint}`
       );
     }
 

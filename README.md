@@ -91,9 +91,9 @@ Notes:
 
 - Convert → **md/html** preserves structure for DOCX (headings, tables, bold/italic/strike, ordered lists, hyperlinks, footnotes; images omitted), HTML, CSV (GFM table), PPTX slides, XLSX sheets. MD→md is passthrough. PDF / legacy `.doc` stay plain text.
 - Convert target `pdf` is **not** supported (create PDF with `writeDocument`).
-- Convert target `pptx` is **not** supported (create decks with `writeDocument({ type: 'pptx', … })`). PPTX supports parse, convert **from** pptx, write (text slides), and surgical text replace.
+- Convert target `pptx` / `pdf` is **not** supported by design (create with `writeDocument`). Convert **from** pptx/odp is only `md|html|text|chunks` — **pptx→docx** is unsupported (not a host bug).
 - **DOCX** and **PPTX** cannot convert **to csv** (use a spreadsheet source). Multi-sheet workbooks export the first sheet to CSV unless `options.sheet` is passed (`CSV_FIRST_SHEET` message when defaulting).
-- **Write** for docx/odt/rtf/epub/pptx: `{ content }` is plain paragraphs only; use `{ format: 'markdown', content }` or `{ blocks }` for headings/lists/tables/blockquotes. PPTX: `#`/`##` start a new slide. See `writeModes` on `getCapabilities()`.
+- **Write** for docx/odt/rtf/epub/pptx: `{ content }` is plain paragraphs only; use `{ format: 'markdown', content }` or `{ blocks }` for headings/lists/tables/blockquotes. PPTX: `#`/`##` start a new slide; lists/tables round-trip structurally (`list_item` / `table` on parse). Inline/blockquote/code on PPTX are lossy and emit `PPTX_*` warnings on `WriteResult.warnings`.
 - Markdown `>` blockquotes round-trip for docx/odt/rtf/epub.
 - **Edit fidelity:** `EditResult.mode` is `surgical` when package markup is patched in place and `rewrite` when content is regenerated. ODS `patchCells` currently reports `rewrite`.
 - `getCapabilities()` (CLI: `capabilities`) reports the exact per-format matrix.

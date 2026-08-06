@@ -257,7 +257,11 @@ export async function writeDocument(
       return writeResult(filePath, `Created RTF: ${filePath}`, resolved);
     }
     if (input.type === 'pptx') {
-      await writeFileAtomic(filePath, await writePptxFromBlocks(flow));
+      const pptxOut = await writePptxFromBlocks(flow);
+      await writeFileAtomic(filePath, pptxOut.buffer);
+      if (pptxOut.warnings.length) {
+        resolved.warnings.push(...pptxOut.warnings);
+      }
       return writeResult(
         filePath,
         `Created PPTX: ${filePath} (${resolved.mode} mode)`,

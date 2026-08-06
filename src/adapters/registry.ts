@@ -98,9 +98,13 @@ export function allowedConvertTargets(sourceFormat: string): ConvertTarget[] {
 export function assertConvertAllowed(sourceFormat: string, target: ConvertTarget): void {
   const allowed = allowedConvertTargets(sourceFormat);
   if (!allowed.includes(target)) {
+    const presentationHint =
+      sourceFormat === 'pptx' || sourceFormat === 'odp'
+        ? ' Presentation→docx/odt/rtf/epub is unsupported by design.'
+        : '';
     throw new DocumentError(
       'UNSUPPORTED_FORMAT',
-      `Convert from ${sourceFormat} to ${target} is not supported. Allowed: ${allowed.join(', ')}`
+      `Convert from ${sourceFormat} to ${target} is not supported. Allowed: ${allowed.join(', ')}.${presentationHint}`
     );
   }
 }

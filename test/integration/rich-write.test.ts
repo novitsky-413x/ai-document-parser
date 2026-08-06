@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
@@ -15,6 +16,15 @@ import {
   type ContentBlock,
   type DocxStructured,
 } from '../../dist/index.js';
+
+const FIXTURE_MD = readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../fixtures/complex-roundtrip.md'
+  ),
+  'utf8'
+);
+const MARKER = 'E2E-COMPLEX-ROUNDTRIP-2026-08-06';
 
 let dir: string;
 
@@ -295,13 +305,27 @@ Paragraph with **bold**.
     assert.doesNotMatch(again.text, /Первый слайд/);
   });
 
-  it('pptx markdown write keeps tables and list item text', async () => {
+  it('pptx markdown write keeps tables and structural list_item blocks', async () => {
     const file = path.join(dir, 'structured.pptx');
-    await writeDocument(file, {
+    const result = await writeDocument(file, {
       type: 'pptx',
       format: 'markdown',
-      content: '# Title\n\n- item one\n- item two\n\n| A | B |\n|---|---|\n| 1 | 2 |\n',
+      content:
+        '# Title\n\nParagraph with **bold** and a [link](https://example.com).\n\n> quote me\n\n```ts\nconst x = 1;\n```\n\n- item one\n- item two\n\n| A | B |\n|---|---|\n| 1 | 2 |\n',
     });
+    assert.ok(
+      result.warnings?.some((w) => w.code === 'PPTX_INLINE_FLATTENED'),
+      'expected PPTX_INLINE_FLATTENED'
+    );
+    assert.ok(
+      result.warnings?.some((w) => w.code === 'PPTX_BLOCKQUOTE_UNWRAPPED'),
+      'expected PPTX_BLOCKQUOTE_UNWRAPPED'
+    );
+    assert.ok(
+      result.warnings?.some((w) => w.code === 'PPTX_CODE_AS_PARAGRAPHS'),
+      'expected PPTX_CODE_AS_PARAGRAPHS'
+    );
+
     const parsed = await parseDocument(file, { output: 'structured' });
     const structured = parsed.structured as {
       slides: string[][];
@@ -314,12 +338,101 @@ Paragraph with **bold**.
       false,
       'table cells must not be flattened with ·'
     );
-    assert.ok(structured.blocks.some((b) => b.type === 'table'));
+    const types = blockTypes(structured.blocks);
+    assert.ok(
+      types.includes('list_item'),
+      `expected list_item in blocks, got ${types.join(',')}`
+    );
+    assert.ok(types.includes('table'));
+    const listItems = structured.blocks.filter((b) => b.type === 'list_item');
+    assert.ok(listItems.length >= 2);
+    assert.ok(
+      listItems.some((b) =>
+        b.type === 'list_item' && b.runs.map((r) => r.text).join('').includes('item one')
+      )
+    );
     const table = structured.blocks.find((b) => b.type === 'table') as Extract<
       ContentBlock,
       { type: 'table' }
     >;
     assert.deepEqual(table.rows[0], ['A', 'B']);
     assert.deepEqual(table.rows[1], ['1', '2']);
+  });
+});
+
+describe('complex-roundtrip fixture matrix', () => {
+  let dir: string;
+
+  before(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'adp-complex-rt-'));
+  });
+
+  after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  for (const type of ['docx', 'odt', 'rtf'] as const) {
+    it(`flow ${type}: markdown write → parse keeps structure + marker`, async () => {
+      const file = path.join(dir, `complex.${type}`);
+      const markup = { format: 'markdown' as const, content: FIXTURE_MD };
+      if (type === 'docx') await writeDocument(file, { type: 'docx', ...markup });
+      else if (type === 'odt') await writeDocument(file, { type: 'odt', ...markup });
+      else await writeDocument(file, { type: 'rtf', ...markup });
+      const parsed = await parseDocument(file, { output: 'structured' });
+      assert.match(parsed.text, new RegExp(MARKER));
+      const blocks = (parsed.structured as { blocks?: ContentBlock[] }).blocks;
+      const types = blockTypes(blocks);
+      assert.ok(types.includes('list_item'), `list_item missing in ${type}: ${types}`);
+      assert.ok(types.includes('table'), `table missing in ${type}`);
+      assert.ok(
+        types.includes('blockquote') || parsed.text.includes('Important blockquote'),
+        `blockquote missing in ${type}`
+      );
+      assert.ok(
+        types.includes('code') || parsed.text.includes('export function hello'),
+        `code missing in ${type}`
+      );
+
+      if (type === 'docx' || type === 'odt') {
+        const md = await convertDocument(file, 'md');
+        assert.match(String(md.value), new RegExp(MARKER));
+        assert.match(String(md.value), /Alpha/);
+      }
+    });
+  }
+
+  it('html/text convert from markdown source keeps marker', async () => {
+    const mdPath = path.join(dir, 'source.md');
+    writeFileSync(mdPath, FIXTURE_MD);
+    const html = await convertDocument(mdPath, 'html');
+    assert.match(String(html.value), new RegExp(MARKER));
+    const text = await convertDocument(mdPath, 'text');
+    assert.match(String(text.value), new RegExp(MARKER));
+  });
+
+  it('pptx: structural lists + table; convert md ok; pptx→docx rejected', async () => {
+    const file = path.join(dir, 'complex.pptx');
+    const written = await writeDocument(file, {
+      type: 'pptx',
+      format: 'markdown',
+      content: FIXTURE_MD,
+    });
+    assert.ok(written.warnings?.some((w) => w.code.startsWith('PPTX_')));
+
+    const parsed = await parseDocument(file, { output: 'structured' });
+    const blocks = (parsed.structured as { blocks?: ContentBlock[] }).blocks;
+    const types = blockTypes(blocks);
+    assert.ok(types.includes('list_item'), `pptx list_item missing: ${types}`);
+    assert.ok(types.includes('table'), `pptx table missing: ${types}`);
+    assert.match(parsed.text, new RegExp(MARKER));
+
+    const md = await convertDocument(file, 'md');
+    assert.match(String(md.value), /Bullet one on slide 2|Alpha|item/i);
+
+    await assert.rejects(
+      () => convertDocument(file, 'docx'),
+      (err: unknown) =>
+        err instanceof DocumentError && err.code === 'UNSUPPORTED_FORMAT'
+    );
   });
 });

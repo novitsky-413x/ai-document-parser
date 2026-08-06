@@ -396,6 +396,33 @@ describe('convertDocument matrix', () => {
       (err: unknown) =>
         err instanceof DocumentError && err.code === 'UNSUPPORTED_FORMAT'
     );
+
+    await assert.rejects(
+      () => convertDocument(file, 'docx'),
+      (err: unknown) =>
+        err instanceof DocumentError &&
+        err.code === 'UNSUPPORTED_FORMAT' &&
+        /by design|Presentation/i.test(err.message)
+    );
+  });
+
+  it('rejects convert target pptx and pdf by design', async () => {
+    const mdFile = path.join(dir, 'policy.md');
+    writeFileSync(mdFile, '# Hello\n\nBody.\n');
+    await assert.rejects(
+      () => convertDocument(mdFile, 'pptx'),
+      (err: unknown) =>
+        err instanceof DocumentError &&
+        err.code === 'UNSUPPORTED_FORMAT' &&
+        /by design|writeDocument/i.test((err as Error).message)
+    );
+    await assert.rejects(
+      () => convertDocument(mdFile, 'pdf'),
+      (err: unknown) =>
+        err instanceof DocumentError &&
+        err.code === 'UNSUPPORTED_FORMAT' &&
+        /by design|writeDocument/i.test((err as Error).message)
+    );
   });
 
   it('converts pdf to md/html/text/chunks', async () => {

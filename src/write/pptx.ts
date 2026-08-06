@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import type { CanonicalFlowBlock, CanonicalInline } from '../ir/types.js';
+import type { DocumentWarning } from '../types.js';
 import { escapeXml } from '../utils/xml.js';
 
 type SlideLine =
@@ -10,19 +11,67 @@ type SlideLine =
 
 type SlideContent = { title: string; body: SlideLine[] };
 
+export type PptxWriteOutput = {
+  buffer: Buffer;
+  warnings: DocumentWarning[];
+};
+
 function runsToPlain(runs: CanonicalInline[]): string {
   return runs.map((r) => r.text).join('');
 }
 
+function runsHaveRichFormatting(runs: CanonicalInline[]): boolean {
+  return runs.some(
+    (r) =>
+      Boolean(r.bold) ||
+      Boolean(r.italic) ||
+      Boolean(r.strike) ||
+      Boolean(r.code) ||
+      Boolean(r.underline) ||
+      Boolean(r.href) ||
+      Boolean(r.subscript) ||
+      Boolean(r.superscript)
+  );
+}
+
+function pushWarning(
+  warnings: DocumentWarning[],
+  seen: Set<string>,
+  code: string,
+  message: string
+): void {
+  if (seen.has(code)) return;
+  seen.add(code);
+  warnings.push({ code, message });
+}
+
+function noteInlineFlatten(
+  runs: CanonicalInline[],
+  warnings: DocumentWarning[],
+  seen: Set<string>
+): void {
+  if (runsHaveRichFormatting(runs)) {
+    pushWarning(
+      warnings,
+      seen,
+      'PPTX_INLINE_FLATTENED',
+      'PPTX_INLINE_FLATTENED: bold/italic/strike/link/code inline formatting is flattened to plain text in PPTX write'
+    );
+  }
+}
+
 function appendList(
   list: Extract<CanonicalFlowBlock, { type: 'list' }>,
-  body: SlideLine[]
+  body: SlideLine[],
+  warnings: DocumentWarning[],
+  seen: Set<string>
 ): void {
   for (const item of list.items) {
     const texts: string[] = [];
     const nested: Extract<CanonicalFlowBlock, { type: 'list' }>[] = [];
     for (const sub of item) {
       if (sub.type === 'paragraph' || sub.type === 'heading') {
+        noteInlineFlatten(sub.runs, warnings, seen);
         const t = runsToPlain(sub.runs).trim();
         if (t) texts.push(t);
       } else if (sub.type === 'list') {
@@ -35,31 +84,54 @@ function appendList(
         list.ordered ? { type: 'numbered', text } : { type: 'bullet', text }
       );
     }
-    for (const sub of nested) appendList(sub, body);
+    for (const sub of nested) appendList(sub, body, warnings, seen);
   }
 }
 
-function appendBlockLines(block: CanonicalFlowBlock, body: SlideLine[]): void {
+function appendBlockLines(
+  block: CanonicalFlowBlock,
+  body: SlideLine[],
+  warnings: DocumentWarning[],
+  seen: Set<string>
+): void {
   if (block.type === 'heading' || block.type === 'paragraph') {
+    noteInlineFlatten(block.runs, warnings, seen);
     const t = runsToPlain(block.runs).trim();
     if (t) body.push({ type: 'paragraph', text: t });
     return;
   }
   if (block.type === 'code') {
+    pushWarning(
+      warnings,
+      seen,
+      'PPTX_CODE_AS_PARAGRAPHS',
+      'PPTX_CODE_AS_PARAGRAPHS: fenced/code blocks are emitted as ordinary paragraphs in PPTX'
+    );
     for (const line of block.text.replace(/\r\n/g, '\n').split('\n')) {
       if (line.length) body.push({ type: 'paragraph', text: line });
     }
     return;
   }
   if (block.type === 'blockquote') {
-    for (const inner of block.blocks) appendBlockLines(inner, body);
+    pushWarning(
+      warnings,
+      seen,
+      'PPTX_BLOCKQUOTE_UNWRAPPED',
+      'PPTX_BLOCKQUOTE_UNWRAPPED: blockquotes are unwrapped to ordinary paragraphs in PPTX (quote semantics lost)'
+    );
+    for (const inner of block.blocks) appendBlockLines(inner, body, warnings, seen);
     return;
   }
   if (block.type === 'list') {
-    appendList(block, body);
+    appendList(block, body, warnings, seen);
     return;
   }
   if (block.type === 'table') {
+    for (const row of block.rows) {
+      for (const cell of row) {
+        if (cell.runs?.length) noteInlineFlatten(cell.runs, warnings, seen);
+      }
+    }
     body.push({
       type: 'table',
       rows: block.rows.map((row) => row.map((cell) => cell.text)),
@@ -68,7 +140,11 @@ function appendBlockLines(block: CanonicalFlowBlock, body: SlideLine[]): void {
 }
 
 /** Split flow blocks into slides: `#` / `##` start a new slide. */
-export function flowBlocksToSlides(blocks: CanonicalFlowBlock[]): SlideContent[] {
+export function flowBlocksToSlides(
+  blocks: CanonicalFlowBlock[],
+  warnings: DocumentWarning[] = [],
+  seen: Set<string> = new Set()
+): SlideContent[] {
   const slides: SlideContent[] = [];
   let current: SlideContent | null = null;
 
@@ -80,13 +156,14 @@ export function flowBlocksToSlides(blocks: CanonicalFlowBlock[]): SlideContent[]
   for (const block of blocks) {
     if (block.type === 'heading' && block.level <= 2) {
       flush();
+      noteInlineFlatten(block.runs, warnings, seen);
       current = { title: runsToPlain(block.runs).trim() || 'Slide', body: [] };
       continue;
     }
     if (!current) {
       current = { title: 'Slide', body: [] };
     }
-    appendBlockLines(block, current.body);
+    appendBlockLines(block, current.body, warnings, seen);
   }
   flush();
   return slides.length ? slides : [{ title: 'Slide', body: [] }];
@@ -189,11 +266,14 @@ function slideXml(slide: SlideContent): string {
 /**
  * Minimal first-party PPTX writer (jszip + DrawingML).
  * Lists → bulleted/numbered paragraphs; tables → DrawingML `a:tbl`.
+ * Returns buffer plus degradation warnings (inline/blockquote/code flatten).
  */
 export async function writePptxFromBlocks(
   blocks: CanonicalFlowBlock[]
-): Promise<Buffer> {
-  const slides = flowBlocksToSlides(blocks);
+): Promise<PptxWriteOutput> {
+  const warnings: DocumentWarning[] = [];
+  const seen = new Set<string>();
+  const slides = flowBlocksToSlides(blocks, warnings, seen);
   const zip = new JSZip();
 
   const overrides = slides
@@ -252,5 +332,6 @@ export async function writePptxFromBlocks(
     zip.file(`ppt/slides/slide${i + 1}.xml`, slideXml(slide));
   });
 
-  return zip.generateAsync({ type: 'nodebuffer' });
+  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+  return { buffer, warnings };
 }

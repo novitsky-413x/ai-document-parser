@@ -82,19 +82,20 @@ Use `convertDocument` when transforming an **existing** file (e.g. md→docx alr
 
 ## Presentations (PPTX)
 
-- Parse: `{ format: 'pptx', slides: string[][] }` — each slide is an array of text blocks.
-- Convert **from** PPTX: `convertDocument(path, 'md'|'html'|'text'|'chunks')` only (no convert **target** `pptx`).
+- Parse: `{ format: 'pptx', slides: string[][], blocks: ContentBlock[] }` — slides are text arrays; `blocks` include structural `list_item` (from DrawingML bullets) and `table`.
+- Convert **from** PPTX: `convertDocument(path, 'md'|'html'|'text'|'chunks')` only.
+- **Not supported by design:** convert **target** `pptx`, convert **pptx→docx** (or other Office flow binaries). Recreate flow docs with `writeDocument({ type: 'docx', … })` after converting to md if needed — do not treat the reject as a host bug.
 - Create-from-scratch:
 
 ```ts
 await writeDocument('deck.pptx', {
   type: 'pptx',
   format: 'markdown',
-  content: '# Title slide\n\nBody line\n\n## Next slide\n\nMore text\n',
+  content: '# Title slide\n\n- Bullet\n\n## Next slide\n\nMore text\n',
 });
 ```
 
-`#` / `##` headings start a new slide; following blocks become body paragraphs. Lists emit bulleted/numbered DrawingML paragraphs; tables emit real `a:tbl` (round-trip as `type:'table'` on parse). Same `plain` / `blocks` / `format+content` modes as other rich writers (`writeModes` on capabilities).
+`#` / `##` headings start a new slide; following blocks become body. Lists emit bulleted/numbered DrawingML paragraphs and parse back as `list_item`; tables emit real `a:tbl` (round-trip as `type:'table'`). Inline emphasis, blockquotes, and fenced code are **lossy** on PPTX write — check `WriteResult.warnings` for `PPTX_INLINE_FLATTENED`, `PPTX_BLOCKQUOTE_UNWRAPPED`, `PPTX_CODE_AS_PARAGRAPHS`. Same `plain` / `blocks` / `format+content` modes as other rich writers (`writeModes` on capabilities).
 
 - Surgical text replace preserves slides/layout/media:
 
@@ -141,7 +142,7 @@ Use `convertDocument` when you need a single artifact for RAG or downstream tool
 | Embedding chunks | `convertDocument(path, 'chunks')` or `parseDocument(..., { output: 'chunks' })` |
 | Spreadsheet dump | `convertDocument(xlsxPath, 'csv')` or `'md'` for GFM tables |
 
-Do **not** convert DOCX/PPTX to `csv`. Unsupported convert targets: `pdf` (use `writeDocument` for plain-text PDF) and `pptx` (create decks with `writeDocument({ type: 'pptx', … })`).  
+Do **not** convert DOCX/PPTX to `csv`. Unsupported convert targets **by design**: `pdf` (use `writeDocument` for plain-text PDF) and `pptx` (create decks with `writeDocument({ type: 'pptx', … })`). Presentation→Office flow (`pptx→docx`, etc.) is also rejected — convert pptx to md/html/text/chunks only.  
 Flow formats (docx/odt/rtf/epub/md/html) also convert to binary `docx` / `odt` / `rtf` / `epub`.  
 PDF / legacy `.doc` → md is plain text only (no reliable document structure).  
 Multi-sheet workbooks: default CSV/MD export is the **first sheet** and may include a `CSV_FIRST_SHEET` message on `ConvertResult.messages`. Pass `options.sheet` to select another sheet: `convertDocument(path, 'csv', { sheet: 'Q2' })`.

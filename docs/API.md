@@ -54,7 +54,7 @@ For **md/html**, rich sources emit from `blocks` (structure preserved):
 |--------|-----------------|
 | docx | headings, **bold**/*italic*/~~strike~~, ordered/bullet lists, **tables**, `[links](url)`, GFM footnotes; images omitted |
 | xlsx / xls | sheet headings + GFM tables |
-| pptx | `## Slide N`, title as `###`, tables when present |
+| pptx | `## Slide N`, title as `###`, `list_item` (from DrawingML bullets), tables when present; inline/blockquote/code may be flattened |
 | html | h1–h6, lists, tables, emphasis |
 | csv | GFM table |
 | md → md | **passthrough** of original file text |
@@ -66,11 +66,11 @@ Supported `to`: `'md' | 'html' | 'csv' | 'text' | 'chunks' | 'rtf' | 'epub' | 'd
 |--------|----------------|
 | docx / doc / odt / rtf / epub | md, html, text, chunks, docx, odt, rtf, epub |
 | xlsx / xls / ods | csv, md, html, text, chunks |
-| pptx / odp | md, html, text, chunks |
+| pptx / odp | md, html, text, chunks (**not** docx/odt/rtf/epub — by design) |
 | pdf | md, html, text, chunks (plain) |
 | md / html / csv | md, html, text, csv, chunks, docx, odt, rtf, epub |
 
-Not supported as convert **targets**: `'pdf'` (use `writeDocument` for plain-text PDF) and `'pptx'` (create with `writeDocument({ type: 'pptx', … })`; convert **from** pptx is supported).
+Not supported as convert **targets** (by design): `'pdf'` (use `writeDocument` for plain-text PDF) and `'pptx'` (create with `writeDocument({ type: 'pptx', … })`). Convert **from** pptx/odp never yields Office flow binaries (`pptx→docx` is rejected with `UNSUPPORTED_FORMAT`).
 
 `parseDocument(..., { output: 'ast' })` for flow formats (including DOCX/PPTX) returns canonical flow blocks derived from structured `blocks` when available.
 
@@ -154,7 +154,7 @@ Create a new file from scratch. For **docx / odt / rtf / epub / pptx**, pick **e
 
 Markdown `>` blockquotes round-trip for docx/odt/rtf/epub via durable quote styles (`ADPQuote` / Word `Quote`) or RTF `{\*\adpquote}`.
 
-PPTX: `#` / `##` headings start a new slide; following blocks become body text. Convert **to** `pptx` remains unsupported.
+PPTX: `#` / `##` headings start a new slide; following blocks become body text (lists → DrawingML bullets; tables → `a:tbl`). Convert **to** `pptx` remains unsupported. Lossy PPTX emit may set `WriteResult.warnings` codes `PPTX_INLINE_FLATTENED`, `PPTX_BLOCKQUOTE_UNWRAPPED`, `PPTX_CODE_AS_PARAGRAPHS`. Advanced `writePptxFromBlocks` returns `{ buffer, warnings }`.
 
 ```ts
 // Plain paragraphs only
