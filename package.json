@@ -1,6 +1,6 @@
 {
     "name": "ai-document-parser",
-    "version": "0.3.107",
+    "version": "0.3.108",
     "description": "Parse, convert, surgically edit, and write office documents for AI agents and Node apps — permissive deps only",
     "license": "MIT",
     "type": "module",
@@ -74,12 +74,15 @@
         "docx": "^9.7.0",
         "jspdf": "^4.2.0",
         "jszip": "^3.10.1",
-        "pdfjs-dist": "6.1.200"
+        "pdfjs-dist": "6.2.108"
     },
     "devDependencies": {
         "@types/node": "^22.15.0",
         "tsx": "^4.23.1",
         "typescript": "^5.8.3"
+    },
+    "overrides": {
+        "dompurify": "^3.4.13"
     },
     "allowScripts": {
         "esbuild": true,

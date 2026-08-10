@@ -257,7 +257,9 @@ export async function writeDocument(
       return writeResult(filePath, `Created RTF: ${filePath}`, resolved);
     }
     if (input.type === 'pptx') {
-      const pptxOut = await writePptxFromBlocks(flow);
+      const theme =
+        'theme' in input && input.theme ? input.theme : undefined;
+      const pptxOut = await writePptxFromBlocks(flow, { theme });
       await writeFileAtomic(filePath, pptxOut.buffer);
       if (pptxOut.warnings.length) {
         resolved.warnings.push(...pptxOut.warnings);

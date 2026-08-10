@@ -154,7 +154,7 @@ Create a new file from scratch. For **docx / odt / rtf / epub / pptx**, pick **e
 
 Markdown `>` blockquotes round-trip for docx/odt/rtf/epub via durable quote styles (`ADPQuote` / Word `Quote`) or RTF `{\*\adpquote}`.
 
-PPTX: `#` / `##` headings start a new slide; following blocks become body text (lists → DrawingML bullets; tables → `a:tbl`). Convert **to** `pptx` remains unsupported. Lossy PPTX emit may set `WriteResult.warnings` codes `PPTX_INLINE_FLATTENED`, `PPTX_BLOCKQUOTE_UNWRAPPED`, `PPTX_CODE_AS_PARAGRAPHS`. Advanced `writePptxFromBlocks` returns `{ buffer, warnings }`.
+PPTX: `#` / `##` headings start a new slide; following blocks become body text (lists → DrawingML bullets; tables → `a:tbl`). Bold/italic/strike/underline/code runs are preserved. Optional `theme?: 'office' | 'ocean' | 'slate'` (default `office`). Convert **to** `pptx` remains unsupported. Lossy bits may set `WriteResult.warnings`: `PPTX_INLINE_FLATTENED` (hyperlinks/sub/sup styled as text, no clickable relationship), `PPTX_BLOCKQUOTE_UNWRAPPED`, `PPTX_CODE_AS_PARAGRAPHS`. Advanced `writePptxFromBlocks` returns `{ buffer, warnings }`.
 
 ```ts
 // Plain paragraphs only
@@ -168,7 +168,7 @@ PPTX: `#` / `##` headings start a new slide; following blocks become body text (
 
 { type: 'xlsx' | 'xls', sheets: Record<string, cell[][]> }
 { type: 'pdf', content: string, title?: string }  // plain text PDF
-{ type: 'odt' | 'rtf' | 'epub' | 'pptx', /* same plain | blocks | format+content as docx */, title?: string }
+{ type: 'odt' | 'rtf' | 'epub' | 'pptx', /* same plain | blocks | format+content as docx */, title?: string, theme?: 'office' | 'ocean' | 'slate' /* pptx only */ }
 ```
 
 `WriteResult` includes `summary.mode` (`'plain' | 'blocks' | 'markdown' | 'html'`) and optional `warnings` (e.g. `PLAIN_WRITE_IGNORED_MARKUP` when plain `content` looks like markdown structure).

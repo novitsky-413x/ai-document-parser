@@ -95,7 +95,7 @@ await writeDocument('deck.pptx', {
 });
 ```
 
-`#` / `##` headings start a new slide; following blocks become body. Lists emit bulleted/numbered DrawingML paragraphs and parse back as `list_item`; tables emit real `a:tbl` (round-trip as `type:'table'`). Inline emphasis, blockquotes, and fenced code are **lossy** on PPTX write — check `WriteResult.warnings` for `PPTX_INLINE_FLATTENED`, `PPTX_BLOCKQUOTE_UNWRAPPED`, `PPTX_CODE_AS_PARAGRAPHS`. Same `plain` / `blocks` / `format+content` modes as other rich writers (`writeModes` on capabilities).
+`#` / `##` headings start a new slide; following blocks become body. Lists emit bulleted/numbered DrawingML paragraphs and parse back as `list_item`; tables emit real `a:tbl` (round-trip as `type:'table'`). Bold/italic/strike/underline/code are preserved. Optional `theme: 'office' | 'ocean' | 'slate'`. Blockquotes and fenced code remain lossy; hyperlinks/sub/sup are styled as text (no clickable relationship) — check `WriteResult.warnings` for `PPTX_INLINE_FLATTENED`, `PPTX_BLOCKQUOTE_UNWRAPPED`, `PPTX_CODE_AS_PARAGRAPHS`. Same `plain` / `blocks` / `format+content` modes as other rich writers (`writeModes` on capabilities).
 
 - Surgical text replace preserves slides/layout/media:
 

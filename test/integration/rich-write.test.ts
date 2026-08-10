@@ -300,14 +300,22 @@ Paragraph with **bold**.
     ]) {
       assert.ok(names.includes(part), `missing package part: ${part}`);
     }
-    const presentation = await zip.file('ppt/presentation.xml').async('string');
+    const presentationPart = zip.file('ppt/presentation.xml');
+    assert.ok(presentationPart);
+    const presentation = await presentationPart.async('string');
     assert.match(presentation, /sldMasterIdLst/);
     assert.match(presentation, /sldSz/);
-    const slide = await zip.file('ppt/slides/slide1.xml').async('string');
+    const slidePart = zip.file('ppt/slides/slide1.xml');
+    assert.ok(slidePart);
+    const slide = await slidePart.async('string');
     assert.match(slide, /<a:xfrm>/);
     assert.match(slide, /<a:prstGeom/);
     assert.match(slide, /graphicFrame/);
-    const ct = await zip.file('[Content_Types].xml').async('string');
+    assert.match(slide, /<a:spcAft><a:spcPts/);
+    assert.match(slide, /<a:normAutofit\/>/);
+    const ctPart = zip.file('[Content_Types].xml');
+    assert.ok(ctPart);
+    const ct = await ctPart.async('string');
     assert.match(ct, /slideMaster\+xml/);
     assert.match(ct, /slideLayout\+xml/);
     assert.match(ct, /theme\+xml/);

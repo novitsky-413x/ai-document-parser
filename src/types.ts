@@ -224,6 +224,9 @@ export type WriteMode = 'plain' | 'blocks' | 'markdown' | 'html';
 /** Markup formats accepted on rich write (`format` + `content`). */
 export type WriteMarkupFormat = 'markdown' | 'html';
 
+/** Visual theme presets for PPTX write. */
+export type PptxThemeId = 'office' | 'ocean' | 'slate';
+
 /**
  * Create-from-scratch input.
  *
@@ -259,9 +262,9 @@ export type WriteDocumentInput =
       content: string;
       title?: string;
     }
-  | { type: 'pptx'; content: string | string[] }
-  | { type: 'pptx'; blocks: ContentBlock[] }
-  | { type: 'pptx'; format: WriteMarkupFormat; content: string };
+  | { type: 'pptx'; content: string | string[]; theme?: PptxThemeId }
+  | { type: 'pptx'; blocks: ContentBlock[]; theme?: PptxThemeId }
+  | { type: 'pptx'; format: WriteMarkupFormat; content: string; theme?: PptxThemeId };
 
 export interface WriteResult {
   path: string;

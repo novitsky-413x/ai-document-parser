@@ -58,6 +58,7 @@ export type {
   WriteDocumentInput,
   WriteMode,
   WriteMarkupFormat,
+  PptxThemeId,
   WriteResult,
   DocumentErrorCode,
   DocumentAst,
