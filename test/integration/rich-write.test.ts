@@ -276,6 +276,43 @@ Paragraph with **bold**.
     assert.deepEqual(xlsx.writeModes, ['plain']);
   });
 
+    it('pptx write emits Office-required package parts and shape geometry', async () => {
+    const file = path.join(dir, 'package.pptx');
+    await writeDocument(file, {
+      type: 'pptx',
+      format: 'markdown',
+      content: '# Title\n\nBody line\n\n| A | B |\n|---|---|\n| 1 | 2 |\n',
+    });
+    const zip = await JSZip.loadAsync(readFileSync(file));
+    const names = Object.keys(zip.files);
+    for (const part of [
+      '[Content_Types].xml',
+      '_rels/.rels',
+      'ppt/presentation.xml',
+      'ppt/_rels/presentation.xml.rels',
+      'ppt/theme/theme1.xml',
+      'ppt/slideMasters/slideMaster1.xml',
+      'ppt/slideMasters/_rels/slideMaster1.xml.rels',
+      'ppt/slideLayouts/slideLayout1.xml',
+      'ppt/slideLayouts/_rels/slideLayout1.xml.rels',
+      'ppt/slides/slide1.xml',
+      'ppt/slides/_rels/slide1.xml.rels',
+    ]) {
+      assert.ok(names.includes(part), `missing package part: ${part}`);
+    }
+    const presentation = await zip.file('ppt/presentation.xml').async('string');
+    assert.match(presentation, /sldMasterIdLst/);
+    assert.match(presentation, /sldSz/);
+    const slide = await zip.file('ppt/slides/slide1.xml').async('string');
+    assert.match(slide, /<a:xfrm>/);
+    assert.match(slide, /<a:prstGeom/);
+    assert.match(slide, /graphicFrame/);
+    const ct = await zip.file('[Content_Types].xml').async('string');
+    assert.match(ct, /slideMaster\+xml/);
+    assert.match(ct, /slideLayout\+xml/);
+    assert.match(ct, /theme\+xml/);
+  });
+
   it('pptx markdown write round-trips parse and surgical edit', async () => {
     const file = path.join(dir, 'deck.pptx');
     const result = await writeDocument(file, {
