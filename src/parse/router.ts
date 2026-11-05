@@ -8,6 +8,7 @@ import { readFileLimited } from '../utils/zip.js';
 import type {
   DocumentInput,
   DocumentResult,
+  DocumentWarning,
   ParseOptions,
 } from '../types.js';
 import { readLegacyDoc, readLegacyDocBuffer } from './legacy-doc.js';
@@ -29,6 +30,7 @@ import {
   refineZipFormat,
   type DetectedFormat,
 } from './detect.js';
+import { extractImageText } from './image.js';
 import { extractPdfText } from './pdf.js';
 import {
   pptxToParagraphs,
@@ -73,7 +75,7 @@ async function resolveInput(
   return { format, buf, filePath };
 }
 
-const BINARY_FORMATS = new Set(['docx', 'xlsx', 'xls', 'pptx', 'pdf', 'doc', 'odt', 'ods', 'odp', 'epub']);
+const BINARY_FORMATS = new Set(['docx', 'xlsx', 'xls', 'pptx', 'pdf', 'doc', 'odt', 'ods', 'odp', 'epub', 'image']);
 
 async function resolveFormat(
   input: DocumentInput,
@@ -227,8 +229,27 @@ export async function parseDocument(
 
     // PDF
     if (format === 'pdf') {
-      const { text } = await extractPdfText(filePath ?? buf!);
-      return finish('pdf', text, filePath, output, { paragraphs: text.split(/\n+/) });
+      const extracted = await extractPdfText(filePath ?? buf!);
+      return finish(
+        'pdf',
+        extracted.text,
+        filePath,
+        output,
+        { paragraphs: extracted.paragraphs, blocks: extracted.blocks },
+        extracted.warnings
+      );
+    }
+
+    if (format === 'image') {
+      const extracted = await extractImageText(filePath ?? buf!);
+      return finish(
+        'image',
+        extracted.text,
+        filePath,
+        output,
+        { paragraphs: extracted.paragraphs, blocks: extracted.blocks },
+        extracted.warnings
+      );
     }
 
     // MD / HTML / CSV
@@ -442,8 +463,10 @@ function finish(
   text: string,
   filePath: string | undefined,
   output: string,
-  shape: Record<string, unknown>
+  shape: Record<string, unknown>,
+  warnings?: DocumentWarning[]
 ): DocumentResult {
+  const warn = warnings && warnings.length > 0 ? warnings : undefined;
   if (output === 'ast') {
     return {
       format,
@@ -457,6 +480,7 @@ function finish(
           (shape.blocks as import('../types.js').ContentBlock[] | undefined) ?? []
         ),
       },
+      warnings: warn,
     };
   }
   if (output === 'chunks') {
@@ -468,9 +492,9 @@ function finish(
       charCount: payload.length,
       path: filePath,
       chunks,
+      warnings: warn,
     };
   }
-  // structured already handled by callers when needed
   if (output === 'structured') {
     const structured = { format, ...shape };
     const payload = JSON.stringify(structured, null, 2);
@@ -480,6 +504,7 @@ function finish(
       charCount: payload.length,
       path: filePath,
       structured,
+      warnings: warn,
     };
   }
   return {
@@ -487,6 +512,7 @@ function finish(
     text,
     charCount: text.length,
     path: filePath,
+    warnings: warn,
   };
 }
 

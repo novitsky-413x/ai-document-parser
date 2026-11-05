@@ -6,6 +6,21 @@ import { writeDocx } from '../write/docx.js';
 
 const MIN_STRING_LEN = 3;
 
+/** Drop FIB noise (CJK/Hangul runs) while keeping Cyrillic and Latin prose. */
+function looksLikeProse(s: string): boolean {
+  if (/^[\d][\d\s.,]{3,}$/.test(s)) return true;
+  if (!/[A-Za-z\u0400-\u04FF]{2,}/.test(s)) return false;
+  if (/[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF\u4E00-\u9FFF]/.test(s)) return false;
+  let ok = 0;
+  let other = 0;
+  for (const ch of s) {
+    if (/[A-Za-z\u0400-\u04FF0-9\s.,:;!?()\u00AB\u00BB"'\u2014\-/%\u2116+]/.test(ch))
+      ok++;
+    else other++;
+  }
+  return other <= ok;
+}
+
 function extractUtf16Strings(buf: Buffer, minChars = MIN_STRING_LEN): string[] {
   const out: string[] = [];
   let i = 0;
@@ -26,7 +41,7 @@ function extractUtf16Strings(buf: Buffer, minChars = MIN_STRING_LEN): string[] {
     }
     if (chars.length >= minChars) {
       const s = chars.join('').trim();
-      if (s && !/^[\x00-\x1f]+$/.test(s)) out.push(s);
+      if (s && looksLikeProse(s)) out.push(s);
     }
     if (i === start) i += 2;
   }

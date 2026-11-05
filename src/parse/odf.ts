@@ -46,7 +46,7 @@ function parseInlineOdf(text: string): CanonicalInline[] {
   // Keep <text:s/> / <text:tab/> / <text:line-break/> as visible text — otherwise the
   // leading "<" is skipped by the regex engine and "text:s/>…" leaks into plain runs.
   const re =
-    /<text:a\b[^>]*xlink:href="([^"]*)"[^>]*>([\s\S]*?)<\/text:a>|<text:span\b[^>]*>([\s\S]*?)<\/text:span>|<text:s\b[^>]*\/>|<text:s\b[^>]*>\s*<\/text:s>|<text:tab\b[^>]*\/>|<text:tab\b[^>]*>\s*<\/text:tab>|<text:line-break\b[^>]*\/>|<text:line-break\b[^>]*>\s*<\/text:line-break>|([^<]+)/g;
+    /<text:a\b[^>]*xlink:href="([^"]*)"[^>]*>([\s\S]*?)<\/text:a>|<text:span\b[^>]*>([\s\S]*?)<\/text:span>|<text:s\b[^>]*\/>|<text:s\b[^>]*>\s*<\/text:s>|<text:tab\b[^>]*\/>|<text:tab\b[^>]*>\s*<\/text:tab>|<text:line-break\b[^>]*\/>|<text:line-break\b[^>]*>\s*<\/text:line-break>|<[^>]+>|([^<]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m[1] != null && m[2] != null) {
@@ -127,6 +127,9 @@ function parseOdtTable(tableXml: string): CanonicalFlowBlock | null {
 
 /** Balanced end for an ODF element whose local name is `local` (e.g. list, table). */
 function findBalancedEnd(xml: string, start: number, local: string): number {
+  // A self-closing <text:p .../> must not swallow the following TOC template.
+  const firstGt = xml.indexOf('>', start);
+  if (firstGt > start && xml.charAt(firstGt - 1) === '/') return firstGt + 1;
   // (?=[\s/>]) so "list" does not match "list-item".
   const openRe = new RegExp(`<(?:[A-Za-z0-9_]+:)?${local}(?=[\\s/>])`);
   const closeRe = new RegExp(`</(?:[A-Za-z0-9_]+:)?${local}\\s*>`, 'g');
@@ -227,6 +230,17 @@ function parseOdtListItemContent(
   return parseOdtFragment(body, styleMap);
 }
 
+/**
+ * Shapes can contain the real title. Drop only a one-letter bullet parked
+ * after the shape: `</draw:custom-shape><text:tab/>ц`.
+ */
+function dropShapeBullet(xml: string): string {
+  return xml.replace(
+    /(<\/draw:(?:custom-shape|frame)>)\s*<text:tab\b[^>]*\/>\s*[\u0400-\u04FF](?![\u0400-\u04FFA-Za-z0-9])/g,
+    '$1'
+  );
+}
+
 function parseOdtParagraph(pXml: string): CanonicalFlowBlock | null {
   const open = /^<text:p\b[^>]*>/.exec(pXml)?.[0] ?? '';
   const style = /text:style-name="([^"]+)"/.exec(open)?.[1];
@@ -239,8 +253,16 @@ function parseOdtParagraph(pXml: string): CanonicalFlowBlock | null {
       ...(codeMeta.language ? { language: codeMeta.language } : {}),
     };
   }
-  const runs = parseInlineOdf(inner);
-  if (!runsToText(runs)) return null;
+  const cleaned = dropShapeBullet(inner);
+  const runs = parseInlineOdf(cleaned);
+  const visible = runsToText(runs);
+  if (!visible) return null;
+  if (
+    /<draw:(?:custom-shape|frame)\b/i.test(cleaned) &&
+    !/[A-Za-z\u0400-\u04FF]{2}/.test(visible)
+  ) {
+    return null;
+  }
   if (isQuoteStyleId(style)) {
     return { type: 'blockquote', blocks: [{ type: 'paragraph', runs }] };
   }
@@ -332,9 +354,15 @@ function indexOfTag(xml: string, qname: string, from: number): number {
 
 function parseOdtBody(xml: string): CanonicalFlowBlock[] {
   const styleMap = parseListStyleOrdered(xml);
+  // Index templates repeat the TOC title ("Оглавление" + the rendered heading).
+  const withoutTocSource = xml.replace(
+    /<text:table-of-content-source\b[\s\S]*?<\/text:table-of-content-source>/gi,
+    ''
+  );
   // Prefer office:text body; fall back to whole content.xml.
   const body =
-    /<office:text\b[^>]*>([\s\S]*)<\/office:text>/i.exec(xml)?.[1] ?? xml;
+    /<office:text\b[^>]*>([\s\S]*)<\/office:text>/i.exec(withoutTocSource)?.[1] ??
+    withoutTocSource;
   return parseOdtFragment(body, styleMap);
 }
 

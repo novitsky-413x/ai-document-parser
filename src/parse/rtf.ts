@@ -386,9 +386,53 @@ function parseRtfBody(body: string, codePage = 1252): CanonicalFlowBlock[] {
   return blocks;
 }
 
+/** Word metadata groups that leak control text. Field instructions and adp markers stay. */
+const IGNORABLE_STAR_PREFIXES = [
+  '{\\*\\generator',
+  '{\\*\\datastore',
+  '{\\*\\latentstyles',
+  '{\\*\\colorschememapping',
+  '{\\*\\themedata',
+  '{\\*\\xmlnstbl',
+  '{\\*\\rsidtbl',
+  '{\\*\\wgrffmtfilter',
+  '{\\*\\pgptbl',
+  '{\\*\\listoverridetable',
+  '{\\*\\revtbl',
+  '{\\*\\stylesheet',
+];
+
+/**
+ * Drop noisy `{\\*...}` destinations (generator, datastore, stylesheet extras).
+ * Keep `{\*\fldinst}` hyperlink instructions and this library's `{\*\adp...}` markers.
+ */
+function removeIgnorableDestinations(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const noisy = IGNORABLE_STAR_PREFIXES.some((prefix) => text.startsWith(prefix, i));
+    if (noisy) {
+      const end = findBalancedBraceGroup(text, i);
+      if (end > i) {
+        i = end - 1;
+        continue;
+      }
+    }
+    out += text[i];
+  }
+  return out;
+}
+
 export function parseRtf(text: string): ParsedCanonical {
   try {
-    const normalized = text.replace(/\r\n/g, '\n');
+    // RTF source line breaks are insignificant (spec); only \par / \\n break lines.
+    // {\*...} destinations are ignorable and otherwise leak control digits into text.
+    const normalized = removeIgnorableDestinations(
+      text
+        .replace(/\r\n/g, '\n')
+        // A backslash before a source newline is a line continuation, not a paragraph.
+        .replace(/\\\n/g, '')
+        .replace(/\n/g, '')
+    );
     if (!/^\{\\rtf/i.test(normalized.trimStart())) {
       throw new DocumentError('PARSE_FAILED', 'Invalid RTF: missing {\\rtf header');
     }

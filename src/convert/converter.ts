@@ -268,6 +268,15 @@ async function emitFromParsed(
     }
   }
 
+  if (format === 'pdf' || format === 'image') {
+    const blocks = blocksOf(parsed);
+    const plain = paragraphsOf(parsed).join('\n\n') || parsed.text;
+    if (blocks && blocks.length) {
+      const rich = emitRich(blocks, dest, messages, plain);
+      return rich instanceof Promise ? rich : rich;
+    }
+  }
+
   const paragraphs = paragraphsOf(parsed);
   if (paragraphs.length > 0) {
     return emitFromParagraphs(paragraphs, dest, messages);

@@ -1,10 +1,10 @@
 import JSZip from 'jszip';
 import { DocumentError } from './errors.js';
-import { DEFAULT_LIMITS, assertMaxBytes } from './limits.js';
+import { DEFAULT_LIMITS, assertMaxBytes, type ResourceLimits } from './limits.js';
 
 export async function loadZipBuffer(
   buf: Buffer,
-  limits = DEFAULT_LIMITS
+  limits: ResourceLimits = DEFAULT_LIMITS
 ): Promise<JSZip> {
   assertMaxBytes(buf.length, limits.maxFileBytes);
   const zip = await JSZip.loadAsync(buf);
@@ -41,7 +41,7 @@ export async function loadZipBuffer(
 
 export async function readFileLimited(
   path: string,
-  limits = DEFAULT_LIMITS
+  limits: ResourceLimits = DEFAULT_LIMITS
 ): Promise<Buffer> {
   const { readFile, stat } = await import('node:fs/promises');
   const st = await stat(path);

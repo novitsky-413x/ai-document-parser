@@ -9,9 +9,15 @@ export const DEFAULT_LIMITS = {
   maxSpreadsheetCells: 2_000_000,
 } as const;
 
-export type ResourceLimits = typeof DEFAULT_LIMITS;
+export type ResourceLimits = {
+  readonly maxFileBytes: number;
+  readonly maxZipEntries: number;
+  readonly maxZipExpandedBytes: number;
+  readonly maxPdfPages: number;
+  readonly maxSpreadsheetCells: number;
+};
 
-export function assertMaxBytes(size: number, limit = DEFAULT_LIMITS.maxFileBytes): void {
+export function assertMaxBytes(size: number, limit: number = DEFAULT_LIMITS.maxFileBytes): void {
   if (size > limit) {
     throw new DocumentError(
       'PARSE_FAILED',
@@ -20,7 +26,7 @@ export function assertMaxBytes(size: number, limit = DEFAULT_LIMITS.maxFileBytes
   }
 }
 
-export function assertMaxPdfPages(pages: number, limit = DEFAULT_LIMITS.maxPdfPages): void {
+export function assertMaxPdfPages(pages: number, limit: number = DEFAULT_LIMITS.maxPdfPages): void {
   if (pages > limit) {
     throw new DocumentError(
       'PARSE_FAILED',
@@ -31,7 +37,7 @@ export function assertMaxPdfPages(pages: number, limit = DEFAULT_LIMITS.maxPdfPa
 
 export function assertMaxSpreadsheetCells(
   cells: number,
-  limit = DEFAULT_LIMITS.maxSpreadsheetCells
+  limit: number = DEFAULT_LIMITS.maxSpreadsheetCells
 ): void {
   if (cells > limit) {
     throw new DocumentError(

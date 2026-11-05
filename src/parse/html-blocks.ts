@@ -55,7 +55,7 @@ function parseInline(html: string): InlineRun[] {
   const runs: InlineRun[] = [];
   // Prefer specific inline tags; fall back to text nodes.
   const re =
-    /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>|<code\b[^>]*>([\s\S]*?)<\/code>|<(strong|b)(\s[^>]*)?>((?:[\s\S]*?))<\/\4>|<(em|i)(\s[^>]*)?>((?:[\s\S]*?))<\/\7>|<(s|strike|del)(\s[^>]*)?>((?:[\s\S]*?))<\/\10>|([^<]+)/gi;
+    /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>|<code\b[^>]*>([\s\S]*?)<\/code>|<(strong|b)(\s[^>]*)?>((?:[\s\S]*?))<\/\4>|<(em|i)(\s[^>]*)?>((?:[\s\S]*?))<\/\7>|<(s|strike|del)(\s[^>]*)?>((?:[\s\S]*?))<\/\10>|<[^>]+>|([^<]+)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
     if (m[1] != null && m[2] != null) {
@@ -185,7 +185,11 @@ export function htmlToBlocks(html: string): ContentBlock[] {
   const normalized = html
     .replace(/\r\n/g, '\n')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '');
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<binary\b[^>]*>[\s\S]*?<\/binary>/gi, '')
+    .replace(/<v\b[^>]*>/gi, '<p>')
+    .replace(/<\/v\s*>/gi, '</p>')
+    .replace(/<empty-line\b[^>]*\/?>/gi, '<br/>');
 
   const blocks: ContentBlock[] = [];
   let i = 0;

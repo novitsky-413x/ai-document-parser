@@ -105,7 +105,7 @@ export async function writeDocxFromBlocks(
     } else if (b.type === 'thematic_break') {
       children.push(
         new Paragraph({
-          border: { bottom: { style: 'single', size: 6, space: 1 } },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 6, space: 1 } },
         })
       );
     } else if (b.type === 'blockquote') {

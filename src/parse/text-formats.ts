@@ -25,13 +25,26 @@ export function parseHtml(text: string): {
   text: string;
   paragraphs: string[];
 } {
-  const normalized = text.replace(/\r\n/g, '\n');
+  const fiction = /<FictionBook\b/i.test(text);
+  const fictionBody = fiction
+    ? (
+        /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(text)?.[1] ??
+        text
+          .replace(/<description\b[\s\S]*?<\/description>/gi, '')
+          .replace(/<binary\b[\s\S]*?<\/binary>/gi, '')
+      ).replace(/<my(?:header|footer)\b[\s\S]*?<\/my(?:header|footer)>/gi, '')
+    : text;
+  const normalized = fictionBody.replace(/\r\n/g, '\n');
   const withoutScripts = normalized
     .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '');
-  const withBreaks = withoutScripts
-    .replace(/<\/(p|div|h[1-6]|li|tr|br)\s*>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n');
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<binary\b[^>]*>[\s\S]*?<\/binary>/gi, '');
+  let withBreaks = withoutScripts
+    .replace(/<\/(p|div|h[1-6]|li|tr|br|v|subtitle|title|section|poem|stanza|cite)\s*>/gi, '\n')
+    .replace(/<(br|empty-line)\b[^>]*\/?>/gi, '\n');
+  if (fiction) {
+    withBreaks = withBreaks.replace(/<\/[a-zA-Z][^>]*>/g, ' ');
+  }
   const plain = withBreaks
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
