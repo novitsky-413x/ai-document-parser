@@ -17,7 +17,7 @@ node scripts/fetch-ocr-runtime.mjs --langs rus,eng
 node scripts/fetch-ocr-runtime.mjs --langs deu,eng --set best
 ```
 
-`--set` is `fast` (default), `best`, or `standard`. `--lang-url` may supply a custom `{lang}` URL template. `--bin download --bin-url` expects a raw tesseract binary, not an archive.
+`--set` is `fast` (default), `best`, or `standard`. `--lang-url` may supply a custom `{lang}` URL template. `--bin download --bin-url` accepts a raw tesseract binary or an archive (zip, tar.*, 7z, NSIS installer, 7-Zip SFX). Archives are extracted and the tesseract binary plus adjacent libraries are copied into `dest/bin`. Pass `--bin-sha256` (and `--lang-sha256 lang=hex`) in production. NSIS/7z extraction needs a full 7-Zip: install `7z` or pass `--seven-zip-url` / `--seven-zip-sfx-url` (Windows) or `--seven-zip-tarball-url` (Linux).
 
 The bundled runtime is accepted when `bin/tesseract` exists and **every language requested by the caller** has a traineddata file (the default request is `rus` and `eng`). Hosts such as WATCHER can pack this folder as `extraResources` (`resources/ocr` → `ocr`) so `process.resourcesPath/ocr` resolves at runtime.
 
@@ -28,6 +28,6 @@ Resolution order used by `resolveOcrRuntime()`:
 3. this bundled folder
 4. `tesseract` and `pdftoppm` on PATH
 
-If the runtime is missing, the parser reports `PDF_OCR_UNAVAILABLE` / `IMAGE_OCR_UNAVAILABLE` and still returns any text layer that pdf.js already extracted. Scanned-PDF OCR needs `pdftoppm` (Poppler); it is not downloaded here. Image OCR works with Tesseract alone.
+If the runtime is missing, the parser reports `PDF_OCR_UNAVAILABLE` / `IMAGE_OCR_UNAVAILABLE` and still returns any text layer that pdf.js already extracted. Scanned-PDF OCR needs `pdftoppm` (Poppler). Poppler is GPL, so it is not downloaded unless you pass `--poppler-url` (and `--poppler-sha256`) explicitly. Image OCR works with Tesseract alone.
 
 Callers can also pass a custom `OcrProvider` and skip the CLI runtime entirely.

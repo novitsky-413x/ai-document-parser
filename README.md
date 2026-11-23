@@ -137,7 +137,7 @@ node scripts/fetch-ocr-runtime.mjs --langs rus,eng
 node scripts/fetch-ocr-runtime.mjs --langs deu,eng --set best
 ```
 
-`--set` may be `fast` (default), `best`, or `standard`. Any Tesseract language id works — URLs are built from the official GitHub tessdata templates. Scanned-PDF OCR also needs Poppler (`pdftoppm`); it is not downloaded by the script. Image OCR works with Tesseract alone.
+`--set` may be `fast` (default), `best`, or `standard`. Any Tesseract language id works — URLs are built from the official GitHub tessdata templates. `--bin download --bin-url` accepts a raw binary or an archive (zip, tar.*, 7z, NSIS, 7-Zip SFX); pass `--bin-sha256` to verify the download. Scanned-PDF OCR also needs Poppler (`pdftoppm`). Poppler is GPL, so the script does not download it unless you pass `--poppler-url`. Image OCR works with Tesseract alone.
 
 ```ts
 import { parseDocument, convertDocument, resolveOcrRuntime } from 'ai-document-parser';

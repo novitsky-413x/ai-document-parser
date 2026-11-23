@@ -1,7 +1,7 @@
 {
     "name": "ai-document-parser",
-    "version": "0.3.110",
-    "description": "Parse, convert, surgically edit, and write office documents for AI agents and Node apps — permissive deps only",
+    "version": "0.3.111",
+    "description": "Parse, convert, surgically edit, and write office documents for AI agents and Node apps \u2014 permissive deps only",
     "license": "MIT",
     "type": "module",
     "engines": {
@@ -39,6 +39,7 @@
         "dist",
         "fonts",
         "scripts/fetch-ocr-runtime.mjs",
+        "scripts/ocr-archive.mjs",
         "resources/ocr/README.md",
         "LICENSE",
         "LICENSES.md",
@@ -46,8 +47,8 @@
     ],
     "scripts": {
         "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
-        "test": "npm run build && node --test --import tsx test/unit/baseline.test.ts test/unit/regressions.test.ts test/unit/pdf-structure.test.ts test/unit/html-table-breaks.test.ts test/unit/atomic-write.test.ts test/unit/ocr-runtime-script.test.ts test/unit/ocr-options.test.ts test/unit/ocr-runtime.test.ts test/unit/ocr-pipeline.test.ts test/integration/roundtrip.test.ts test/integration/open-formats.test.ts test/integration/stabilization.test.ts test/integration/rich-write.test.ts test/integration/surgical-edit.test.ts",
-        "test:watch": "node --test --watch --import tsx test/unit/baseline.test.ts test/unit/regressions.test.ts test/unit/pdf-structure.test.ts test/unit/html-table-breaks.test.ts test/unit/atomic-write.test.ts test/unit/ocr-runtime-script.test.ts test/unit/ocr-options.test.ts test/unit/ocr-runtime.test.ts test/unit/ocr-pipeline.test.ts test/integration/roundtrip.test.ts test/integration/open-formats.test.ts test/integration/stabilization.test.ts test/integration/rich-write.test.ts test/integration/surgical-edit.test.ts",
+        "test": "npm run build && node --test --import tsx test/unit/baseline.test.ts test/unit/regressions.test.ts test/unit/pdf-structure.test.ts test/unit/html-table-breaks.test.ts test/unit/atomic-write.test.ts test/unit/ocr-archive.test.ts test/unit/ocr-runtime-script.test.ts test/unit/ocr-options.test.ts test/unit/ocr-runtime.test.ts test/unit/ocr-pipeline.test.ts test/integration/roundtrip.test.ts test/integration/open-formats.test.ts test/integration/stabilization.test.ts test/integration/rich-write.test.ts test/integration/surgical-edit.test.ts",
+        "test:watch": "node --test --watch --import tsx test/unit/baseline.test.ts test/unit/regressions.test.ts test/unit/pdf-structure.test.ts test/unit/html-table-breaks.test.ts test/unit/atomic-write.test.ts test/unit/ocr-archive.test.ts test/unit/ocr-runtime-script.test.ts test/unit/ocr-options.test.ts test/unit/ocr-runtime.test.ts test/unit/ocr-pipeline.test.ts test/integration/roundtrip.test.ts test/integration/open-formats.test.ts test/integration/stabilization.test.ts test/integration/rich-write.test.ts test/integration/surgical-edit.test.ts",
         "test:smoke": "node scripts/smoke-scratch.mjs",
         "typecheck": "tsc -p tsconfig.json --noEmit",
         "check-licenses": "node scripts/check-licenses.mjs",

@@ -63,3 +63,29 @@ test('parseArgs rejects an unknown --set and plan rejects a bad language id', ()
     /Invalid OCR language id/
   );
 });
+
+test('parseArgs accepts archive verification flags', () => {
+  const sha = 'ab'.repeat(32);
+  const opts = parseArgs([
+    '--bin',
+    'download',
+    '--bin-url',
+    'https://example.test/tesseract-setup.exe',
+    '--bin-sha256',
+    sha,
+    '--lang-sha256',
+    `eng=${sha},rus=${sha}`,
+    '--cache-dir',
+    '/tmp/ocr-cache',
+    '--seven-zip-url',
+    'https://example.test/7zr.exe',
+    '--seven-zip-sha256',
+    sha,
+  ]);
+  assert.equal(opts.bin, 'download');
+  assert.equal(opts.binUrl, 'https://example.test/tesseract-setup.exe');
+  assert.equal(opts.binSha256, sha);
+  assert.equal(opts.langSha256.eng, sha);
+  assert.equal(opts.cacheDir, path.resolve('/tmp/ocr-cache'));
+  assert.equal(opts.sevenZipUrl, 'https://example.test/7zr.exe');
+});

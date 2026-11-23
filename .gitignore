@@ -16,3 +16,4 @@ test/**/*.map
 resources/ocr/bin/
 resources/ocr/lib/
 resources/ocr/tessdata/
+resources/ocr/.cache/
