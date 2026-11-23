@@ -213,11 +213,7 @@ function tableFromCanonical(
             new TableCell({
               borders: TABLE_BORDERS,
               width: { size: colWidth, type: WidthType.DXA },
-              children: [
-                new Paragraph({
-                  children: cellChildren(cell),
-                }),
-              ],
+              children: cellParagraphs(cell),
             })
         ),
       });
@@ -231,7 +227,34 @@ function padRow(row: CanonicalTableCell[], colCount: number): CanonicalTableCell
   return cells;
 }
 
-function cellChildren(cell: CanonicalTableCell): Array<TextRun | ExternalHyperlink> {
-  if (cell.runs?.length) return runsToChildren(cell.runs);
-  return [new TextRun({ text: cell.text || ' ' })];
+function splitRunsOnNewlines(runs: CanonicalInline[]): CanonicalInline[][] {
+  const lines: CanonicalInline[][] = [[]];
+  for (const run of runs) {
+    const parts = (run.text ?? '').replace(/\r\n/g, '\n').split('\n');
+    parts.forEach((part, i) => {
+      if (i > 0) lines.push([]);
+      if (part || lines[lines.length - 1].length === 0) {
+        lines[lines.length - 1].push({ ...run, text: part });
+      }
+    });
+  }
+  return lines.length ? lines : [[]];
+}
+
+function cellParagraphs(cell: CanonicalTableCell): Paragraph[] {
+  if (cell.runs?.length) {
+    return splitRunsOnNewlines(cell.runs).map(
+      (runs) =>
+        new Paragraph({
+          children: runsToChildren(runs.length ? runs : [{ text: ' ' }]),
+        })
+    );
+  }
+  const lines = (cell.text || ' ').replace(/\r\n/g, '\n').split('\n');
+  return lines.map(
+    (line) =>
+      new Paragraph({
+        children: [new TextRun({ text: line.length ? line : ' ' })],
+      })
+  );
 }

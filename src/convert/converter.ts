@@ -89,7 +89,7 @@ export async function convertDocument(
       }
     }
 
-    const parsed = await parseDocument(input, { output: 'structured' });
+    const parsed = await parseDocument(input, { output: 'structured', ocr: options.ocr });
     const allowed = allowedConvertTargets(parsed.format);
     if (!allowed.includes(dest as typeof allowed[number])) {
       const presentationHint =

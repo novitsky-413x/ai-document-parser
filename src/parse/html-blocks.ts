@@ -98,6 +98,19 @@ function parseInline(html: string): InlineRun[] {
   return runs;
 }
 
+/** Preserve <br> and block boundaries as newlines inside a table cell. */
+function cellPlainText(html: string): string {
+  const withBreaks = html
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/\s*(p|div|li|h[1-6]|tr)\s*>/gi, '\n')
+    .replace(/<\s*(p|div|li|h[1-6])(\s[^>]*)?>/gi, '\n');
+  return decodeEntities(withBreaks.replace(/<[^>]+>/g, ''))
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function parseTableHtml(tableHtml: string): ContentBlock {
   const rows: string[][] = [];
   const trRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
@@ -107,7 +120,7 @@ function parseTableHtml(tableHtml: string): ContentBlock {
     const cellRe = /<(td|th)\b[^>]*>([\s\S]*?)<\/\1>/gi;
     let c: RegExpExecArray | null;
     while ((c = cellRe.exec(tr[1])) !== null) {
-      cells.push(decodeEntities(c[2].replace(/<[^>]+>/g, '')).trim());
+      cells.push(cellPlainText(c[2]));
     }
     if (cells.length) rows.push(cells);
   }

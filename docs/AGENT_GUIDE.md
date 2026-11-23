@@ -38,6 +38,10 @@ await editDocument(path, {
 
 4. **Verify** by reading structured again.
 
+## OCR
+
+Scanned PDFs and raster images are OCR'd automatically when Tesseract is bundled or on PATH (default languages `rus`+`eng`). Pass `ocr: false` to skip, `{ enabled: true }` to OCR every PDF page, or `{ languages: ['deu', 'eng'], tessdataDir }` for other languages. A custom `provider` can replace the Tesseract CLI. Check `warnings` for `OCR_LANG_MISSING`, `PDF_OCR_UNAVAILABLE`, or `IMAGE_OCR_USED`. The parser does not ship the engine — see the README OCR section and `scripts/fetch-ocr-runtime.mjs`.
+
 ## Spreadsheets
 
 - Prefer `output: 'structured'` to get 2D grids.

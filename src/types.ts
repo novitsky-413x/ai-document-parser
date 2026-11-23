@@ -20,17 +20,92 @@ export type ConvertFormat =
 
 export type DocumentInput = string | Buffer | Uint8Array | ArrayBuffer;
 
+export type OcrEnabledMode = boolean | 'auto';
+
+export type OcrRuntimeSource = 'options' | 'env' | 'bundled' | 'path';
+
+export interface OcrWord {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  page: number;
+}
+
+export interface OcrRuntime {
+  bin: string;
+  libDir?: string;
+  tessdataDir?: string;
+  popplerBin?: string;
+  bundled: boolean;
+  source: OcrRuntimeSource;
+}
+
+export interface OcrRecognizeRequest {
+  imagePath: string;
+  page: number;
+  languages: string[];
+  psm: number;
+  oem?: number;
+  timeoutMs: number;
+  runtime: OcrRuntime;
+}
+
+export interface OcrRecognizeResult {
+  words: OcrWord[];
+  warnings?: DocumentWarning[];
+}
+
+export interface OcrProvider {
+  /** Recognize one raster image. The default provider shells out to Tesseract. */
+  recognize(request: OcrRecognizeRequest): Promise<OcrRecognizeResult>;
+}
+
+export interface OcrOptions {
+  /**
+   * `'auto'` (default): OCR raster images and PDF pages that have no usable text layer.
+   * `true`: OCR every PDF page (and images).
+   * `false`: skip OCR entirely.
+   */
+  enabled?: OcrEnabledMode;
+  /** Tesseract language codes, e.g. `['rus', 'eng']`. Default `['rus', 'eng']`. */
+  languages?: string[];
+  /** Path to the Tesseract binary. Overrides `ADP_TESSERACT`. */
+  bin?: string;
+  /** Directory containing `*.traineddata`. Overrides `ADP_TESSDATA` / `TESSDATA_PREFIX`. */
+  tessdataDir?: string;
+  /** Path to `pdftoppm` (Poppler). Overrides `ADP_PDFTOPPM`. */
+  popplerBin?: string;
+  /** Tesseract page segmentation mode. Default 6. */
+  psm?: number;
+  /** Tesseract OCR engine mode. */
+  oem?: number;
+  /** Rasterization DPI for scanned PDF pages. Default 300. */
+  dpi?: number;
+  /** Max PDF pages to OCR in one call. Default 80. */
+  pageCap?: number;
+  /** Timeout in milliseconds for a Tesseract recognition call. Default 120000. */
+  timeoutMs?: number;
+  /** Replace the default Tesseract CLI provider (e.g. tesseract.js or a cloud engine). */
+  provider?: OcrProvider;
+}
+
 export interface ParseOptions {
   /** Default: 'text' */
   output?: ParseOutputMode;
-  /** Reserved; currently ignored (no OCR pipeline in core). Default: false */
-  ocr?: boolean;
+  /**
+   * `false` skips OCR. `true` is the same as `{ enabled: 'auto' }` (historical
+   * default: images and PDF pages without a usable text layer). Pass an
+   * object to set languages, paths, or a custom provider.
+   */
+  ocr?: boolean | OcrOptions;
   extractAttachments?: boolean;
   includeRawContent?: boolean;
 }
 
 export interface ConvertOptions {
-  ocr?: boolean;
+  ocr?: boolean | OcrOptions;
   extractAttachments?: boolean;
   generator?: Record<string, unknown>;
   /** Sheet name to export when converting a workbook to CSV (default: first sheet). */

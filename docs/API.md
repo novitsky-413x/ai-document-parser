@@ -7,18 +7,38 @@ Parse a file path, `Buffer`, `Uint8Array`, or `ArrayBuffer`.
 ```ts
 type ParseOptions = {
   output?: 'text' | 'structured' | 'ast' | 'chunks'; // default 'text'
-  /** Reserved; currently ignored (no OCR pipeline in core). */
-  ocr?: boolean;
+  /**
+   * false skips OCR. true is the same as { enabled: 'auto' } (images + PDF
+   * pages without a usable text layer). Pass an object for languages, paths,
+   * or a custom OcrProvider. Default: auto with languages ['rus', 'eng'].
+   */
+  ocr?: boolean | OcrOptions;
   /** Reserved; currently ignored. */
   extractAttachments?: boolean;
   /** Reserved; currently ignored. */
   includeRawContent?: boolean;
 };
+
+type OcrOptions = {
+  enabled?: boolean | 'auto';
+  languages?: string[];
+  bin?: string;
+  tessdataDir?: string;
+  popplerBin?: string;
+  psm?: number;
+  oem?: number;
+  dpi?: number;
+  pageCap?: number;
+  timeoutMs?: number;
+  provider?: OcrProvider;
+};
 ```
+
+`resolveOcrRuntime({ languages, bin, tessdataDir, popplerBin })` is exported from the package root. Resolution order: explicit options → `ADP_TESSERACT` / `ADP_TESSDATA` / `TESSDATA_PREFIX` / `ADP_PDFTOPPM` → bundled `resources/ocr` (valid when the binary and every requested `*.traineddata` exist) → `tesseract` on PATH. `pdftoppm` is also looked up next to the runtime. Missing languages yield `OCR_LANG_MISSING` and OCR is skipped; any text layer is kept. See the README OCR section.
 
 Returns `DocumentResult` with `format`, `text`, `charCount`, optional `structured` / `ast` / `chunks` / `warnings`.
 
-**Core formats:** `docx`, `xlsx`, `xls`, `pptx`, `pdf`, `md`, `html`, `csv`, legacy `doc`, `odt`, `ods`, `odp`, `rtf`, `epub`.
+**Core formats:** `docx`, `xlsx`, `xls`, `pptx`, `pdf`, `md`, `html`, `csv`, legacy `doc`, `odt`, `ods`, `odp`, `rtf`, `epub`, raster `image` (`png`/`jpg`/`tiff`/`gif`/`webp`/`bmp`).
 
 **Structured contracts (for edit / agent tools):**
 
@@ -39,8 +59,8 @@ One-step parse + generate. Always parses with `output: 'structured'` internally,
 
 ```ts
 type ConvertOptions = {
-  /** Reserved; currently ignored. */
-  ocr?: boolean;
+  /** Same `ocr` option as `parseDocument` (forwarded to the parse step). */
+  ocr?: boolean | OcrOptions;
   extractAttachments?: boolean;
   generator?: Record<string, unknown>;
   /** Sheet name to export when converting a workbook to CSV (default: first sheet). */
@@ -206,5 +226,8 @@ import type {
   InlineRun,
   DocumentResult,
   ConvertResult,
+  OcrOptions,
+  OcrProvider,
+  OcrRuntime,
 } from 'ai-document-parser';
 ```

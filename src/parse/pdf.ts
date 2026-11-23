@@ -14,10 +14,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { DocumentError, wrapError } from '../utils/errors.js';
 import { assertMaxPdfPages } from '../utils/limits.js';
 import { readFileLimited } from '../utils/zip.js';
-import type { ContentBlock, DocumentWarning } from '../types.js';
+import type { ContentBlock, DocumentWarning, OcrOptions } from '../types.js';
 import { emitMarkdownFromBlocks, flattenBlocksToParagraphs } from '../convert/blocks.js';
 import { ensurePdfRuntimePolyfills } from './pdf-runtime-polyfills.js';
-import { ocrPdfPages } from './pdf-ocr.js';
+import { ocrPdfPages, ocrUsedMessage } from './pdf-ocr.js';
+import { normalizeOcrOptions } from './ocr-options.js';
 import {
   countLetters,
   linesToBlocks,
@@ -180,7 +181,10 @@ function itemsToWords(items: PdfTextItem[], page: number): PdfWord[] {
  * Text layer via pdfjs, OCR (bundled or system Tesseract) only for pages with almost no letters,
  * then geometry → ContentBlock markdown.
  */
-export async function extractPdfText(input: string | Buffer): Promise<PdfExtractResult> {
+export async function extractPdfText(
+  input: string | Buffer,
+  ocr?: boolean | OcrOptions
+): Promise<PdfExtractResult> {
   ensurePdfRuntimePolyfills();
   let pdf: {
     numPages: number;
@@ -229,8 +233,15 @@ export async function extractPdfText(input: string | Buffer): Promise<PdfExtract
       if (letters < PDF_EMPTY_PAGE_LETTERS) thinPages.push(pageNum);
     }
 
+    const ocrOptions = normalizeOcrOptions(ocr);
     const warnings: DocumentWarning[] = [];
-    if (thinPages.length) {
+    const pagesToOcr =
+      ocrOptions.enabled === false
+        ? []
+        : ocrOptions.enabled === true
+          ? Array.from({ length: loaded.numPages }, (_, i) => i + 1)
+          : thinPages;
+    if (pagesToOcr.length) {
       let pdfPath = typeof input === 'string' ? input : '';
       let tmpDir: string | undefined;
       try {
@@ -239,25 +250,26 @@ export async function extractPdfText(input: string | Buffer): Promise<PdfExtract
           pdfPath = path.join(tmpDir, 'input.pdf');
           await writeFile(pdfPath, input);
         }
-        const ocr = await ocrPdfPages(pdfPath, thinPages);
-        for (const warning of ocr.warnings) warnings.push(warning);
-        if (ocr.usedPages.length) {
+        const recognized = await ocrPdfPages(pdfPath, pagesToOcr, ocr);
+        for (const warning of recognized.warnings) warnings.push(warning);
+        if (recognized.usedPages.length) {
           const byPage = new Map<number, PdfWord[]>();
-          for (const word of ocr.words) {
+          for (const word of recognized.words) {
             const list = byPage.get(word.page);
             if (list) list.push(word);
             else byPage.set(word.page, [word]);
           }
-          for (const pageNum of ocr.usedPages) {
+          for (const pageNum of recognized.usedPages) {
             pageWords.set(pageNum, byPage.get(pageNum) || []);
           }
-          warnings.push({
-            code: 'PDF_OCR_USED',
-            message:
-              'Страницы без текстового слоя распознаны Tesseract (rus+eng, 300 dpi): ' +
-              ocr.usedPages.join(', ') +
-              '.',
-          });
+          warnings.push(
+            ocrUsedMessage(
+              ocrOptions.enabled === true ? 'pdf-force' : 'pdf-auto',
+              ocrOptions.languages,
+              ocrOptions.dpi,
+              recognized.usedPages
+            )
+          );
         }
       } finally {
         if (tmpDir) await rm(tmpDir, { recursive: true, force: true });

@@ -12,3 +12,7 @@ test/**/*.js
 test/**/*.d.ts
 test/**/*.map
 *.tgz
+# OCR runtime (fetched by scripts/fetch-ocr-runtime.mjs — do not commit binaries)
+resources/ocr/bin/
+resources/ocr/lib/
+resources/ocr/tessdata/

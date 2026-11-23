@@ -12,6 +12,8 @@ import {
 } from './index.js';
 import { getCapabilities } from './adapters/registry.js';
 import { parseCsv } from './parse/text-formats.js';
+import { ocrOptionsFromCliFlags } from './parse/ocr-options.js';
+import type { DocumentWarning, OcrOptions, ParseOutputMode } from './types.js';
 
 /** How many values each flag consumes (Infinity: rest of argv). */
 const FLAG_ARITY: Record<string, number> = {
@@ -27,6 +29,9 @@ const FLAG_ARITY: Record<string, number> = {
   '--patch': 3,
   '--all': 0,
   '--append': Infinity,
+  '--ocr': 0,
+  '--no-ocr': 0,
+  '--ocr-lang': 1,
 };
 
 /** First token after the command that is not a flag or a flag value. */
@@ -72,8 +77,8 @@ function usage(reason?: string): never {
   console.error(`ai-document-parser <command> ...
 
 Commands:
-  read <file> [--output text|structured|ast|chunks]
-  convert <file> --to <format> [-o <outfile>]
+  read <file> [--output text|structured|ast|chunks] [--ocr|--no-ocr] [--ocr-lang rus,eng]
+  convert <file> --to <format> [-o <outfile>] [--ocr|--no-ocr] [--ocr-lang rus,eng]
   edit <docx> --replace <old> <new> [--all]
   edit <docx> --append <paragraph> [<paragraph>...]
   edit <xlsx> --patch <sheet> <cell> <value>
@@ -85,6 +90,22 @@ Commands:
   process.exit(1);
 }
 
+
+function cliOcrOption(args: string[]): boolean | OcrOptions | undefined {
+  return ocrOptionsFromCliFlags({
+    ocr: args.includes('--ocr'),
+    noOcr: args.includes('--no-ocr'),
+    ocrLang: flagValue(args, '--ocr-lang'),
+  });
+}
+
+function printWarnings(warnings?: DocumentWarning[]): void {
+  if (!warnings?.length) return;
+  for (const warning of warnings) {
+    console.error(`${warning.code}: ${warning.message}`);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const cmd = args[0];
@@ -93,17 +114,14 @@ async function main(): Promise<void> {
   if (cmd === 'read') {
     const file = findPositional(args);
     if (!file) usage('read requires a file');
-    const output = (flagValue(args, '--output') ?? 'text') as
-      | 'text'
-      | 'structured'
-      | 'ast'
-      | 'chunks';
-    const result = await parseDocument(file, { output });
+    const output = (flagValue(args, '--output') ?? 'text') as ParseOutputMode;
+    const result = await parseDocument(file, { output, ocr: cliOcrOption(args) });
     if (output === 'ast') {
       console.log(JSON.stringify(result.ast, null, 2));
     } else {
       console.log(result.text);
     }
+    printWarnings(result.warnings);
     return;
   }
 
@@ -111,7 +129,7 @@ async function main(): Promise<void> {
     const file = findPositional(args);
     const to = flagValue(args, '--to');
     if (!file || !to) usage('convert requires a file and --to <format>');
-    const result = await convertDocument(file, to);
+    const result = await convertDocument(file, to, { ocr: cliOcrOption(args) });
     const outPath = flagValue(args, '-o');
     const serialized = serializeConvertValue(result.value);
     if (outPath) {
@@ -121,6 +139,7 @@ async function main(): Promise<void> {
       if (typeof serialized === 'string') console.log(serialized);
       else process.stdout.write(serialized);
     }
+    printWarnings(result.messages as DocumentWarning[] | undefined);
     return;
   }
 

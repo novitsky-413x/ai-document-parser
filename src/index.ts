@@ -5,6 +5,14 @@
  */
 
 export { parseDocument, convertDocToDocx } from './parse/index.js';
+export {
+  resolveOcrRuntime,
+  normalizeOcrOptions,
+  tesseractOcrProvider,
+  createTesseractOcrProvider,
+  PDF_OCR_PAGE_CAP,
+  DEFAULT_OCR_LANGUAGES,
+} from './parse/pdf-ocr.js';
 export { convertDocument } from './convert/index.js';
 export {
   editDocument,
@@ -36,6 +44,14 @@ export type {
   ParseOutputMode,
   ConvertFormat,
   ConvertOptions,
+  OcrOptions,
+  OcrEnabledMode,
+  OcrRuntime,
+  OcrRuntimeSource,
+  OcrProvider,
+  OcrRecognizeRequest,
+  OcrRecognizeResult,
+  OcrWord,
   ConvertResult,
   DocumentInput,
   DocumentResult,

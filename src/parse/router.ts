@@ -229,7 +229,7 @@ export async function parseDocument(
 
     // PDF
     if (format === 'pdf') {
-      const extracted = await extractPdfText(filePath ?? buf!);
+      const extracted = await extractPdfText(filePath ?? buf!, options.ocr);
       return finish(
         'pdf',
         extracted.text,
@@ -241,7 +241,7 @@ export async function parseDocument(
     }
 
     if (format === 'image') {
-      const extracted = await extractImageText(filePath ?? buf!);
+      const extracted = await extractImageText(filePath ?? buf!, options.ocr);
       return finish(
         'image',
         extracted.text,

@@ -3,23 +3,40 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import type { DocumentWarning } from '../types.js';
+import type {
+  DocumentWarning,
+  OcrOptions,
+  OcrProvider,
+  OcrRecognizeRequest,
+  OcrRecognizeResult,
+  OcrRuntime,
+  OcrWord,
+} from '../types.js';
 import type { PdfWord } from './pdf-structure.js';
+import {
+  DEFAULT_PDFTOPPM_TIMEOUT_MS,
+  languageFlag,
+  normalizeOcrOptions,
+  PDF_OCR_PAGE_CAP,
+  type ResolvedOcrOptions,
+} from './ocr-options.js';
+import {
+  hasAllOcrLanguages,
+  listInstalledOcrLanguages,
+  missingOcrLanguages,
+  ocrLangMissingWarning,
+  ocrProcessEnv,
+  resolveOcrRuntime,
+  type OcrCommandRunner,
+  type ResolveOcrRuntimeOptions,
+} from './ocr-runtime.js';
 
-const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+export { PDF_OCR_PAGE_CAP, DEFAULT_OCR_LANGUAGES, normalizeOcrOptions } from './ocr-options.js';
+export { resolveOcrRuntime, ocrProcessEnv, listInstalledOcrLanguages } from './ocr-runtime.js';
+export type { OcrRuntime } from '../types.js';
 
 const execFileAsync = promisify(execFile);
-
-export const PDF_OCR_PAGE_CAP = 80;
-
-export interface OcrRuntime {
-  bin: string;
-  libDir?: string;
-  tessdataDir?: string;
-  bundled: boolean;
-}
 
 export interface OcrPagesResult {
   words: PdfWord[];
@@ -27,72 +44,26 @@ export interface OcrPagesResult {
   usedPages: number[];
 }
 
-function ocrRootCandidates(): string[] {
-  const out: string[] = [];
-  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-  const resources = typeof resourcesPath === 'string' ? resourcesPath : '';
-  if (resources) out.push(path.join(resources, 'ocr'));
-  let dir = moduleDir;
-  for (let i = 0; i < 8; i++) {
-    out.push(path.join(dir, 'resources', 'ocr'));
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  out.push(path.join(process.cwd(), 'resources', 'ocr'));
-  return out;
+/** Test / host seam for spawning Tesseract and pdftoppm. */
+export interface OcrEngineHooks {
+  run?: OcrCommandRunner;
+  existsSync?: (filePath: string) => boolean;
+  resolveRuntime?: (input?: ResolveOcrRuntimeOptions) => OcrRuntime;
 }
 
-export function resolveOcrRuntime(): OcrRuntime {
-  const seen = new Set<string>();
-  for (const root of ocrRootCandidates()) {
-    if (seen.has(root)) continue;
-    seen.add(root);
-    const binName = process.platform === 'win32' ? 'tesseract.exe' : 'tesseract';
-    const bin = path.join(root, 'bin', binName);
-    const tess = path.join(root, 'tessdata');
-    if (existsSync(bin) && existsSync(path.join(tess, 'rus.traineddata'))) {
-      const lib = path.join(root, 'lib');
-      return {
-        bin,
-        libDir: existsSync(lib) ? lib : undefined,
-        tessdataDir: tess,
-        bundled: true,
-      };
-    }
-  }
-  return {
-    bin: process.platform === 'win32' ? 'tesseract.exe' : 'tesseract',
-    bundled: false,
-  };
-}
-
-function ocrEnv(runtime: OcrRuntime): NodeJS.ProcessEnv {
-  const env = Object.assign({}, process.env);
-  if (runtime.libDir) {
-    const prev = env.LD_LIBRARY_PATH || '';
-    env.LD_LIBRARY_PATH = prev ? runtime.libDir + ':' + prev : runtime.libDir;
-  }
-  return env;
-}
-
-function run(
-  cmd: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  timeout: number
-): Promise<string> {
-  return execFileAsync(cmd, args, {
+const defaultRun: OcrCommandRunner = async (cmd, args, env, timeout) => {
+  const out = await execFileAsync(cmd, args, {
     encoding: 'utf8',
     env,
     timeout,
     maxBuffer: 16 * 1024 * 1024,
-  }).then((out) => {
-    if (typeof out === 'string') return out;
-    if (out && typeof out.stdout === 'string') return out.stdout;
-    return '';
   });
-}
+  if (typeof out === 'string') return { stdout: out, stderr: '' };
+  return {
+    stdout: typeof out.stdout === 'string' ? out.stdout : '',
+    stderr: typeof out.stderr === 'string' ? out.stderr : '',
+  };
+};
 
 function uniqueSorted(pages: number[]): number[] {
   const sorted = pages.slice().sort((a, b) => a - b);
@@ -130,75 +101,174 @@ function tsvToWords(tsv: string, page: number): PdfWord[] {
   return words;
 }
 
-function unavailable(message: string): DocumentWarning {
-  return { code: 'PDF_OCR_UNAVAILABLE', message };
+function isMissingBinary(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  const msg = err instanceof Error ? err.message : String(err);
+  return code === 'ENOENT' || msg.indexOf('ENOENT') !== -1;
 }
 
-export async function ocrPdfPages(pdfPath: string, pages: number[]): Promise<OcrPagesResult> {
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function mentions(err: unknown, token: string): boolean {
+  return errorMessage(err).toLowerCase().indexOf(token.toLowerCase()) !== -1;
+}
+
+export function tesseractRecognizeArgs(request: OcrRecognizeRequest): string[] {
+  const args = [request.imagePath, 'stdout', '-l', languageFlag(request.languages), '--psm', String(request.psm)];
+  if (request.oem != null) args.push('--oem', String(request.oem));
+  if (request.runtime.tessdataDir) args.push('--tessdata-dir', request.runtime.tessdataDir);
+  args.push('tsv');
+  return args;
+}
+
+export function createTesseractOcrProvider(hooks: OcrEngineHooks = {}): OcrProvider {
+  const run = hooks.run ?? defaultRun;
+  return {
+    async recognize(request: OcrRecognizeRequest): Promise<OcrRecognizeResult> {
+      const env = ocrProcessEnv(request.runtime);
+      const out = await run(request.runtime.bin, tesseractRecognizeArgs(request), env, request.timeoutMs);
+      return { words: tsvToWords(out.stdout, request.page) };
+    },
+  };
+}
+
+export const tesseractOcrProvider: OcrProvider = createTesseractOcrProvider();
+
+async function checkRequestedLanguages(
+  runtime: OcrRuntime,
+  options: ResolvedOcrOptions,
+  hooks: OcrEngineHooks
+): Promise<DocumentWarning | undefined> {
+  const run = hooks.run ?? defaultRun;
+  const exists = hooks.existsSync ?? existsSync;
+  const listed = await listInstalledOcrLanguages(runtime, run, options.timeoutMs);
+  let installed = listed.languages;
+  if (!installed.length && runtime.tessdataDir) {
+    installed = options.languages.filter((lang) =>
+      hasAllOcrLanguages(runtime.tessdataDir!, [lang], exists)
+    );
+  }
+  if (installed.length) {
+    const missing = missingOcrLanguages(options.languages, installed);
+    if (missing.length) return ocrLangMissingWarning(missing, installed);
+    return undefined;
+  }
+  return listed.warning;
+}
+
+async function rasterizePdfPage(
+  pdfPath: string,
+  page: number,
+  tmp: string,
+  options: ResolvedOcrOptions,
+  runtime: OcrRuntime,
+  hooks: OcrEngineHooks
+): Promise<string> {
+  const run = hooks.run ?? defaultRun;
+  const exists = hooks.existsSync ?? existsSync;
+  const poppler = runtime.popplerBin || (process.platform === 'win32' ? 'pdftoppm.exe' : 'pdftoppm');
+  const base = path.join(tmp, 'page-' + page);
+  await run(
+    poppler,
+    ['-png', '-r', String(options.dpi), '-f', String(page), '-l', String(page), '-singlefile', pdfPath, base],
+    ocrProcessEnv(runtime),
+    DEFAULT_PDFTOPPM_TIMEOUT_MS
+  );
+  const img = base + '.png';
+  if (!exists(img)) {
+    throw new Error('pdftoppm did not create an image for page ' + page);
+  }
+  return img;
+}
+
+export async function ocrPdfPages(
+  pdfPath: string,
+  pages: number[],
+  ocr?: boolean | OcrOptions,
+  hooks: OcrEngineHooks = {}
+): Promise<OcrPagesResult> {
   const warnings: DocumentWarning[] = [];
   const words: PdfWord[] = [];
   const usedPages: number[] = [];
-  if (!pages.length) return { words, warnings, usedPages };
+  const options = normalizeOcrOptions(ocr);
+  if (options.enabled === false || !pages.length) return { words, warnings, usedPages };
 
-  const runtime = resolveOcrRuntime();
+  const resolve = hooks.resolveRuntime ?? resolveOcrRuntime;
+  const runtime = resolve({
+    languages: options.languages,
+    bin: options.bin,
+    tessdataDir: options.tessdataDir,
+    popplerBin: options.popplerBin,
+    existsSync: hooks.existsSync,
+  });
+
+  const provider = options.provider ?? createTesseractOcrProvider(hooks);
+  const usingCustom = Boolean(options.provider);
+
+  if (!usingCustom) {
+    const langWarning = await checkRequestedLanguages(runtime, options, hooks);
+    if (langWarning) {
+      warnings.push(langWarning);
+      if (langWarning.code === 'OCR_LANG_MISSING') return { words, warnings, usedPages };
+    }
+  }
+
   const sorted = uniqueSorted(pages);
   let todo = sorted;
-  if (sorted.length > PDF_OCR_PAGE_CAP) {
-    todo = sorted.slice(0, PDF_OCR_PAGE_CAP);
+  if (sorted.length > options.pageCap) {
+    todo = sorted.slice(0, options.pageCap);
     warnings.push({
       code: 'PDF_OCR_TRUNCATED',
       message:
-        'OCR выполнен только для ' +
-        PDF_OCR_PAGE_CAP +
-        ' из ' +
+        'OCR ran only on the first ' +
+        options.pageCap +
+        ' of ' +
         sorted.length +
-        ' страниц без текстового слоя.',
+        ' pages that need recognition.',
     });
   }
 
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'adp-ocr-'));
   try {
-    let failed = false;
     for (const page of todo) {
-      const base = path.join(tmp, 'page-' + page);
       try {
-        await run(
-          'pdftoppm',
-          ['-png', '-r', '300', '-f', String(page), '-l', String(page), '-singlefile', pdfPath, base],
-          process.env,
-          60000
-        );
-        const img = base + '.png';
-        if (!existsSync(img)) {
-          throw new Error('pdftoppm не создал изображение страницы ' + page);
+        const img = await rasterizePdfPage(pdfPath, page, tmp, options, runtime, hooks);
+        const recognized = await provider.recognize({
+          imagePath: img,
+          page,
+          languages: options.languages,
+          psm: options.psm,
+          oem: options.oem,
+          timeoutMs: options.timeoutMs,
+          runtime,
+        });
+        if (recognized.warnings) {
+          for (const warning of recognized.warnings) warnings.push(warning);
         }
-        const args = [img, 'stdout', '-l', 'rus+eng', '--psm', '6'];
-        if (runtime.tessdataDir) args.push('--tessdata-dir', runtime.tessdataDir);
-        args.push('tsv');
-        const tsv = await run(runtime.bin, args, ocrEnv(runtime), 120000);
-        const pageWords = tsvToWords(tsv, page);
+        const pageWords = recognized.words as PdfWord[];
         if (pageWords.length) {
-          for (const word of pageWords) words.push(word);
+          for (const word of pageWords) words.push({ ...word, page: word.page || page });
           usedPages.push(page);
         }
       } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        const msg = err instanceof Error ? err.message : String(err);
-        if (code === 'ENOENT' || msg.indexOf('ENOENT') !== -1) {
-          const missing =
-            msg.indexOf('pdftoppm') !== -1
-              ? 'Не найден pdftoppm (пакет poppler-utils). Растеризация страниц для OCR от него зависит, в сборку Poppler не входит.'
-              : 'OCR недоступен: нет resources/ocr (scripts/fetch-ocr-runtime.sh) и нет tesseract в PATH.';
-          warnings.push(unavailable(missing));
+        if (isMissingBinary(err)) {
+          const missingPoppler = mentions(err, 'pdftoppm');
+          warnings.push({
+            code: 'PDF_OCR_UNAVAILABLE',
+            message: missingPoppler
+              ? 'pdftoppm was not found (Poppler). Scanned-PDF OCR needs it; Poppler is not bundled. Image OCR works with Tesseract alone. Set popplerBin, ADP_PDFTOPPM, or install poppler-utils.'
+              : 'OCR is unavailable: no bundled resources/ocr (run `node scripts/fetch-ocr-runtime.mjs`) and no tesseract on PATH. Set bin / ADP_TESSERACT to use a custom binary.',
+          });
+          // A missing runtime cannot recover on later pages.
           return { words, warnings, usedPages };
         }
-        if (!failed) {
-          failed = true;
-          warnings.push({
-            code: 'PDF_OCR_FAILED',
-            message: 'Tesseract не смог распознать страницу ' + page + ': ' + msg.slice(0, 300),
-          });
-        }
+        warnings.push({
+          code: 'PDF_OCR_FAILED',
+          message: 'Tesseract failed to recognize page ' + page + ': ' + errorMessage(err).slice(0, 300),
+        });
+        // Keep going so a single bad page does not drop the rest.
       }
     }
   } finally {
@@ -207,38 +277,90 @@ export async function ocrPdfPages(pdfPath: string, pages: number[]): Promise<Ocr
   return { words, warnings, usedPages };
 }
 
-/** Recognize one raster image (png/jpeg/tiff/gif/webp/bmp) with the bundled Tesseract. */
-export async function ocrImageFile(imagePath: string): Promise<{
+/** Recognize one raster image (png/jpeg/tiff/gif/webp/bmp). */
+export async function ocrImageFile(
+  imagePath: string,
+  ocr?: boolean | OcrOptions,
+  hooks: OcrEngineHooks = {}
+): Promise<{
   words: PdfWord[];
   warnings: DocumentWarning[];
 }> {
   const warnings: DocumentWarning[] = [];
-  const runtime = resolveOcrRuntime();
+  const options = normalizeOcrOptions(ocr);
+  if (options.enabled === false) return { words: [], warnings };
+
+  const resolve = hooks.resolveRuntime ?? resolveOcrRuntime;
+  const runtime = resolve({
+    languages: options.languages,
+    bin: options.bin,
+    tessdataDir: options.tessdataDir,
+    popplerBin: options.popplerBin,
+    existsSync: hooks.existsSync,
+  });
+
+  const provider = options.provider ?? createTesseractOcrProvider(hooks);
+  if (!options.provider) {
+    const langWarning = await checkRequestedLanguages(runtime, options, hooks);
+    if (langWarning) {
+      warnings.push(langWarning);
+      if (langWarning.code === 'OCR_LANG_MISSING') return { words: [], warnings };
+    }
+  }
+
   try {
-    const args = [imagePath, 'stdout', '-l', 'rus+eng', '--psm', '6'];
-    if (runtime.tessdataDir) args.push('--tessdata-dir', runtime.tessdataDir);
-    args.push('tsv');
-    const tsv = await run(runtime.bin, args, ocrEnv(runtime), 120000);
-    return { words: tsvToWords(tsv, 1), warnings };
+    const recognized = await provider.recognize({
+      imagePath,
+      page: 1,
+      languages: options.languages,
+      psm: options.psm,
+      oem: options.oem,
+      timeoutMs: options.timeoutMs,
+      runtime,
+    });
+    if (recognized.warnings) {
+      for (const warning of recognized.warnings) warnings.push(warning);
+    }
+    return { words: recognized.words as PdfWord[], warnings };
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    const msg = err instanceof Error ? err.message : String(err);
-    if (code === 'ENOENT' || msg.indexOf('ENOENT') !== -1) {
-      warnings.push(
-        unavailable(
-          'OCR недоступен: нет resources/ocr (scripts/fetch-ocr-runtime.sh) и нет tesseract в PATH.'
-        )
-      );
-      warnings[warnings.length - 1] = {
+    if (isMissingBinary(err)) {
+      warnings.push({
         code: 'IMAGE_OCR_UNAVAILABLE',
-        message: warnings[warnings.length - 1].message,
-      };
+        message:
+          'OCR is unavailable: no bundled resources/ocr (run `node scripts/fetch-ocr-runtime.mjs`) and no tesseract on PATH. Set bin / ADP_TESSERACT to use a custom binary.',
+      });
       return { words: [], warnings };
     }
     warnings.push({
       code: 'IMAGE_OCR_FAILED',
-      message: 'Tesseract не смог распознать изображение: ' + msg.slice(0, 300),
+      message: 'Tesseract failed to recognize the image: ' + errorMessage(err).slice(0, 300),
     });
     return { words: [], warnings };
   }
 }
+
+export function ocrUsedMessage(
+  kind: 'pdf-auto' | 'pdf-force' | 'image',
+  languages: readonly string[],
+  dpi: number,
+  pages?: number[]
+): DocumentWarning {
+  const langs = languageFlag(languages);
+  if (kind === 'image') {
+    return {
+      code: 'IMAGE_OCR_USED',
+      message: 'Image text recognized with Tesseract (' + langs + ').',
+    };
+  }
+  const prefix =
+    kind === 'pdf-force'
+      ? 'Pages were recognized with Tesseract ('
+      : 'Pages without a text layer were recognized with Tesseract (';
+  return {
+    code: 'PDF_OCR_USED',
+    message: prefix + langs + ', ' + dpi + ' dpi): ' + (pages ?? []).join(', ') + '.',
+  };
+}
+
+// Re-export word type alias used by hosts that imported PdfWord-shaped OCR output.
+export type { OcrWord };
