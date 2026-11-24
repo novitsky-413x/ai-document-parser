@@ -82,6 +82,8 @@ Same shape works with `type: 'odt' | 'rtf' | 'epub' | 'pptx'`. Markdown `>` bloc
 
 If `WriteResult.warnings` contains `PLAIN_WRITE_IGNORED_MARKUP`, re-issue the call with `format: 'markdown'` or `blocks`.
 
+**Layout-faithful documents** (title pages, letters, forms — anything copied from a photo or a printed page): use `format: 'html'` with inline `style` or a `<style>` block. DOCX and ODT keep `text-align`, margins / spacing, `line-height`, `text-indent`, font size / family / color, `letter-spacing`, page breaks, `body` defaults and `@page { size; margin }`; `<br>` is a real line break. Markdown has no layout. `HTML_STYLE_IGNORED` in `WriteResult.warnings` lists CSS that was not applied (unsupported properties / selectors, or a target format without layout such as RTF / EPUB / PPTX) — simplify that CSS or pick DOCX/ODT, do not retry blindly. See `docs/API.md` → *HTML layout*.
+
 Use `convertDocument` when transforming an **existing** file (e.g. md→docx already on disk), not as the primary create-from-scratch path.
 
 ## Presentations (PPTX)

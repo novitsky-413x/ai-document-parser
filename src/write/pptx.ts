@@ -1,12 +1,12 @@
 import JSZip from 'jszip';
 import type { CanonicalFlowBlock, CanonicalInline } from '../ir/types.js';
-import type { DocumentWarning, PptxThemeId } from '../types.js';
+import type { DocumentWarning, PptxThemeId, TextAlign } from '../types.js';
 import { escapeXml } from '../utils/xml.js';
 
 export type { PptxThemeId };
 
 type SlideLine =
-  | { type: 'paragraph'; runs: CanonicalInline[] }
+  | { type: 'paragraph'; runs: CanonicalInline[]; align?: TextAlign }
   | { type: 'bullet'; runs: CanonicalInline[] }
   | { type: 'numbered'; runs: CanonicalInline[] }
   | { type: 'table'; rows: string[][] };
@@ -230,7 +230,8 @@ function appendBlockLines(
   if (block.type === 'heading' || block.type === 'paragraph') {
     noteInlineLimits(block.runs, warnings, seen);
     if (runsToPlain(block.runs).trim()) {
-      body.push({ type: 'paragraph', runs: block.runs });
+      const align = block.layout?.align;
+      body.push({ type: 'paragraph', runs: block.runs, ...(align && align !== 'left' ? { align } : {}) });
     }
     return;
   }
@@ -332,7 +333,13 @@ function runXml(
   if (run.underline || run.href) attrs.push('u="sng"');
   const typeface = run.code ? 'Consolas' : theme.minorFont;
   const solid = run.href ? theme.hlink : run.code ? 'B45309' : color;
-  return `<a:r><a:rPr ${attrs.join(' ')}><a:solidFill><a:srgbClr val="${solid}"/></a:solidFill><a:latin typeface="${escapeXml(typeface)}"/></a:rPr><a:t${tSpace(run.text)}>${escapeXml(run.text)}</a:t></a:r>`;
+  const rPr = `<a:rPr ${attrs.join(' ')}><a:solidFill><a:srgbClr val="${solid}"/></a:solidFill><a:latin typeface="${escapeXml(typeface)}"/></a:rPr>`;
+  // `\n` in run text is a line break inside the paragraph (DrawingML a:br).
+  return run.text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((part, i) => `${i > 0 ? `<a:br>${rPr}</a:br>` : ''}<a:r>${rPr}<a:t${tSpace(part)}>${escapeXml(part)}</a:t></a:r>`)
+    .join('');
 }
 
 function runsXml(
@@ -350,6 +357,8 @@ function spcAftXml(pts?: number): string {
   return `<a:spcAft><a:spcPts val="${Math.round(pts * 100)}"/></a:spcAft>`;
 }
 
+const PPTX_ALIGN: Record<TextAlign, string> = { left: 'l', center: 'ctr', right: 'r', justify: 'just' };
+
 function paraXml(
   runs: CanonicalInline[],
   theme: ThemePreset,
@@ -362,10 +371,13 @@ function paraXml(
     forceBold?: boolean;
     /** Space after paragraph, in points. */
     spcAft?: number;
+    align?: TextAlign;
   }
 ): string {
   const spacing = spcAftXml(opts?.spcAft);
-  let pPr = spacing ? `<a:pPr>${spacing}</a:pPr>` : '<a:pPr/>';
+  const algn = opts?.align ? ` algn="${PPTX_ALIGN[opts.align]}"` : '';
+  let pPr = spacing || algn ? `<a:pPr${algn}>${spacing}</a:pPr>` : '<a:pPr/>';
+  if (spacing && !algn) pPr = `<a:pPr>${spacing}</a:pPr>`;
   if (opts?.bullet) {
     pPr = `<a:pPr marL="342900" indent="-342900">${spacing}<a:buFont typeface="Arial"/><a:buClr><a:srgbClr val="${theme.accent1}"/></a:buClr><a:buChar char="•"/></a:pPr>`;
   } else if (opts?.numbered) {
@@ -513,6 +525,7 @@ function slideXml(slide: SlideContent, theme: ThemePreset): string {
           sizePt: 18,
           color: theme.bodyColor,
           spcAft: 8,
+          ...(line.align ? { align: line.align } : {}),
         })
       );
       numberAt = 1;

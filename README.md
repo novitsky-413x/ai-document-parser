@@ -96,6 +96,7 @@ See [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
 Notes:
 
 - Convert → **md/html** preserves structure for DOCX (headings, tables, bold/italic/strike, ordered lists, hyperlinks, footnotes; images omitted), HTML, CSV (GFM table), PPTX slides, XLSX sheets. MD→md is passthrough. PDF / legacy `.doc` stay plain text (PDF may include OCR text).
+- Write with `format: 'html'` keeps layout in DOCX/ODT: alignment, spacing, indents, line height, font size/family/color, letter-spacing, page breaks, body defaults and `@page` size/margins (inline `style` + simple `<style>` rules); unsupported CSS is reported as `HTML_STYLE_IGNORED`.
 - Convert target `pdf` is **not** supported (create PDF with `writeDocument`).
 - Convert target `pptx` / `pdf` is **not** supported by design (create with `writeDocument`). Convert **from** pptx/odp is only `md|html|text|chunks` — **pptx→docx** is unsupported (not a host bug).
 - **DOCX** and **PPTX** cannot convert **to csv** (use a spreadsheet source). Multi-sheet workbooks export the first sheet to CSV unless `options.sheet` is passed (`CSV_FIRST_SHEET` message when defaulting).

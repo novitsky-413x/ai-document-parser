@@ -173,6 +173,22 @@ Create a new file from scratch. For **docx / odt / rtf / epub / pptx**, pick **e
 | **blocks** | `{ type, blocks: ContentBlock[] }` | Emit real headings, lists, tables, emphasis, links, code, blockquotes. |
 | **markup** | `{ type, format: 'markdown' \| 'html', content: string }` | Parse MD/HTML → same structured emit as convert. |
 
+### HTML layout (`format: 'html'`)
+
+HTML writes keep visual layout, not only structure. Applied CSS: inline `style`, `<style>` rules with tag / `.class` / `#id` selectors joined by descendant or `>` combinators, legacy `align=`, `<center>`, `<font face color>`, and browser defaults for `h1`–`h6` / `p` (sizes, bold headings, 1em paragraph margins). `<head>` / `<title>` never become body text; `<br>` is a line break (`\n` in run text, `w:br` / `text:line-break` / `a:br`); `div` / `section` / `article` / `header` / `footer` / … are block containers whose style is inherited (margins go to the first/last child, CSS sibling-margin collapse is emulated).
+
+| CSS | DOCX | ODT | PPTX | RTF / EPUB |
+|-----|------|-----|------|------------|
+| `text-align` | ✓ | ✓ | ✓ | — |
+| `margin-*` / `padding-*` (spacing before/after, indents), `text-indent`, `line-height`, `page-break-*` / `break-*` | ✓ | ✓ | — | — |
+| `font-size`, `font-family`, `color`, `letter-spacing`, `font-weight`, `font-style`, `text-decoration` | ✓ | ✓ | bold/italic/strike/underline | bold/italic |
+| `body` font / size / color / line-height → document defaults | ✓ | ✓ | — | — |
+| `@page { size; margin }` (+ `body` margin) → page size / margins | ✓ | ✓ | — | — |
+
+Anything else (unsupported properties, pseudo-classes, `@media`, …) is skipped and reported once as `HTML_STYLE_IGNORED` in `WriteResult.warnings`, with the property / selector names. RTF / EPUB / PPTX add the same code when the HTML carried CSS they cannot represent.
+
+The block model carries this as optional `layout` on `paragraph` / `heading` blocks (`BlockLayout`: `align`, `spaceBeforePt`, `spaceAfterPt`, `lineHeight`, `indentLeftPt`, `indentRightPt`, `firstLineIndentPt`, `pageBreakBefore`) and optional run props (`sizePt`, `font`, `color`, `letterSpacingPt`, `underline`). Blocks mode for docx/odt accepts `layout?: DocumentLayout` (`font`, `sizePt`, `color`, `lineHeight`, `page: { widthPt, heightPt, margin*Pt }`). Parsing / converting HTML files stays content-only (no `layout` in parse results).
+
 Markdown `>` blockquotes round-trip for docx/odt/rtf/epub via durable quote styles (`ADPQuote` / Word `Quote`) or RTF `{\*\adpquote}`.
 
 PPTX: `#` / `##` headings start a new slide; following blocks become body text (lists → DrawingML bullets; tables → `a:tbl`). Bold/italic/strike/underline/code runs are preserved. Optional `theme?: 'office' | 'ocean' | 'slate'` (default `office`). Convert **to** `pptx` remains unsupported. Lossy bits may set `WriteResult.warnings`: `PPTX_INLINE_FLATTENED` (hyperlinks/sub/sup styled as text, no clickable relationship), `PPTX_BLOCKQUOTE_UNWRAPPED`, `PPTX_CODE_AS_PARAGRAPHS`. Advanced `writePptxFromBlocks` returns `{ buffer, warnings }`.
@@ -184,6 +200,9 @@ PPTX: `#` / `##` headings start a new slide; following blocks become body text (
 // Preferred for LLM agents — rich DOCX/ODT/RTF/EPUB/PPTX
 { type: 'docx', format: 'markdown', content: '# Title\n\n> quote\n\n- item\n' }
 
+// Layout-faithful documents (title pages, letters, forms) — CSS is honoured
+{ type: 'docx', format: 'html', content: '<p style="text-align:center;font-size:22pt"><b>Title</b></p>' }
+
 // Typed hosts
 { type: 'docx', blocks: [{ type: 'heading', level: 1, runs: [{ text: 'Title' }] }] }
 
@@ -192,7 +211,7 @@ PPTX: `#` / `##` headings start a new slide; following blocks become body text (
 { type: 'odt' | 'rtf' | 'epub' | 'pptx', /* same plain | blocks | format+content as docx */, title?: string, theme?: 'office' | 'ocean' | 'slate' /* pptx only */ }
 ```
 
-`WriteResult` includes `summary.mode` (`'plain' | 'blocks' | 'markdown' | 'html'`) and optional `warnings` (e.g. `PLAIN_WRITE_IGNORED_MARKUP` when plain `content` looks like markdown structure).
+`WriteResult` includes `summary.mode` (`'plain' | 'blocks' | 'markdown' | 'html'`) and optional `warnings` (e.g. `PLAIN_WRITE_IGNORED_MARKUP` when plain `content` looks like markdown structure, `HTML_STYLE_IGNORED` when HTML CSS could not be applied).
 
 `getCapabilities()` sets `writeModes: ['plain','blocks','markdown','html']` for docx/odt/rtf/epub/pptx (spreadsheets/PDF: `['plain']` only).
 

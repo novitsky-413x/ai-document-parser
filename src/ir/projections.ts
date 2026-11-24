@@ -240,8 +240,15 @@ export function contentBlocksToFlow(blocks: ContentBlock[]): CanonicalFlowBlock[
       continue;
     }
     flushList();
-    if (b.type === 'heading') out.push({ type: 'heading', level: b.level, runs: b.runs });
-    else if (b.type === 'paragraph') out.push({ type: 'paragraph', runs: b.runs });
+    if (b.type === 'heading')
+      out.push({
+        type: 'heading',
+        level: b.level,
+        runs: b.runs,
+        ...(b.layout ? { layout: b.layout } : {}),
+      });
+    else if (b.type === 'paragraph')
+      out.push({ type: 'paragraph', runs: b.runs, ...(b.layout ? { layout: b.layout } : {}) });
     else if (b.type === 'table')
       out.push({
         type: 'table',

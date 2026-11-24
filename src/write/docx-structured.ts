@@ -1,9 +1,11 @@
 import {
+  AlignmentType,
   BorderStyle,
   Document,
   ExternalHyperlink,
   HeadingLevel,
   LevelFormat,
+  LineRuleType,
   Packer,
   Paragraph,
   Table,
@@ -13,6 +15,7 @@ import {
   WidthType,
 } from 'docx';
 import type { CanonicalFlowBlock, CanonicalInline, CanonicalTableCell } from '../ir/types.js';
+import type { BlockLayout, DocumentLayout } from '../types.js';
 import { codeStyleId } from '../utils/code-style.js';
 import { QUOTE_STYLE_ID } from '../utils/quote-style.js';
 
@@ -30,20 +33,84 @@ const TABLE_BORDERS = {
   right: TABLE_BORDER,
 };
 
+/** Points → twentieths of a point (twips). */
+function twips(pt: number): number {
+  return Math.round(pt * 20);
+}
+
+/**
+ * CSS line-height is a multiple of the font size; Word "multiple" spacing is a
+ * multiple of the font's natural line (~1.15 × size for common fonts).
+ */
+const CSS_NORMAL_LINE = 1.15;
+
+function lineSpacing(lineHeight: number): { line: number; lineRule: (typeof LineRuleType)['AUTO'] } {
+  return { line: Math.max(1, Math.round((lineHeight / CSS_NORMAL_LINE) * 240)), lineRule: LineRuleType.AUTO };
+}
+
+const ALIGN = {
+  left: AlignmentType.LEFT,
+  center: AlignmentType.CENTER,
+  right: AlignmentType.RIGHT,
+  justify: AlignmentType.JUSTIFIED,
+} as const;
+
+/** Paragraph options from block layout (alignment, spacing, indents, page break). */
+function paragraphLayout(layout: BlockLayout | undefined): Record<string, unknown> {
+  if (!layout) return {};
+  const out: Record<string, unknown> = {};
+  if (layout.align) out.alignment = ALIGN[layout.align];
+  const spacing: Record<string, unknown> = {};
+  if (layout.spaceBeforePt != null) spacing.before = twips(layout.spaceBeforePt);
+  if (layout.spaceAfterPt != null) spacing.after = twips(layout.spaceAfterPt);
+  if (layout.lineHeight != null) Object.assign(spacing, lineSpacing(layout.lineHeight));
+  if (Object.keys(spacing).length) out.spacing = spacing;
+  const indent: Record<string, number> = {};
+  if (layout.indentLeftPt) indent.left = twips(layout.indentLeftPt);
+  if (layout.indentRightPt) indent.right = twips(layout.indentRightPt);
+  if (layout.firstLineIndentPt) {
+    if (layout.firstLineIndentPt > 0) indent.firstLine = twips(layout.firstLineIndentPt);
+    else indent.hanging = twips(-layout.firstLineIndentPt);
+  }
+  if (Object.keys(indent).length) out.indent = indent;
+  if (layout.pageBreakBefore) out.pageBreakBefore = true;
+  return out;
+}
+
+function textRunOptions(r: CanonicalInline): Record<string, unknown> {
+  return {
+    bold: r.bold,
+    italics: r.italic,
+    strike: r.strike,
+    ...(r.underline ? { underline: {} } : {}),
+    ...(r.sizePt ? { size: Math.round(r.sizePt * 2) } : {}),
+    ...(r.code ? { font: CODE_FONT } : r.font ? { font: r.font } : {}),
+    ...(r.color ? { color: r.color } : {}),
+    ...(r.letterSpacingPt ? { characterSpacing: twips(r.letterSpacingPt) } : {}),
+    ...(r.href ? { style: 'Hyperlink' } : {}),
+  };
+}
+
+/** `\n` in run text is a line break (`w:br`), matching how DOCX is read. */
+function textRuns(r: CanonicalInline): TextRun[] {
+  const parts = r.text.replace(/\r\n/g, '\n').split('\n');
+  return parts.map(
+    (part, i) =>
+      new TextRun({
+        ...textRunOptions(r),
+        text: part,
+        ...(i > 0 ? { break: 1 } : {}),
+      })
+  );
+}
+
 function runsToChildren(runs: CanonicalInline[]): Array<TextRun | ExternalHyperlink> {
-  return runs.map((r) => {
-    const text = new TextRun({
-      text: r.text,
-      bold: r.bold,
-      italics: r.italic,
-      strike: r.strike,
-      ...(r.code ? { font: CODE_FONT } : {}),
-      ...(r.href ? { style: 'Hyperlink' } : {}),
-    });
+  return runs.flatMap((r): Array<TextRun | ExternalHyperlink> => {
+    const runsOut = textRuns(r);
     if (r.href) {
-      return new ExternalHyperlink({ children: [text], link: r.href });
+      return [new ExternalHyperlink({ children: runsOut, link: r.href })];
     }
-    return text;
+    return runsOut;
   });
 }
 
@@ -71,9 +138,16 @@ function listToParagraphs(
   }
 }
 
+export type DocxWriteOptions = {
+  /** Document defaults (font, size, color, line height) and page size/margins. */
+  layout?: DocumentLayout;
+};
+
 export async function writeDocxFromBlocks(
-  blocks: CanonicalFlowBlock[]
+  blocks: CanonicalFlowBlock[],
+  options: DocxWriteOptions = {}
 ): Promise<Buffer> {
+  const docLayout = options.layout ?? {};
   const children: Array<Paragraph | Table> = [];
 
   for (const b of blocks) {
@@ -90,11 +164,14 @@ export async function writeDocxFromBlocks(
       children.push(
         new Paragraph({
           heading: map[level - 1],
+          ...paragraphLayout(b.layout),
           children: runsToChildren(b.runs),
         })
       );
     } else if (b.type === 'paragraph') {
-      children.push(new Paragraph({ children: runsToChildren(b.runs) }));
+      children.push(
+        new Paragraph({ ...paragraphLayout(b.layout), children: runsToChildren(b.runs) })
+      );
     } else if (b.type === 'code') {
       children.push(
         new Paragraph({
@@ -114,7 +191,10 @@ export async function writeDocxFromBlocks(
           children.push(
             new Paragraph({
               style: QUOTE_STYLE_ID,
-              indent: { left: 720 },
+              ...paragraphLayout(inner.layout),
+              indent: {
+                left: 720 + (inner.layout?.indentLeftPt ? twips(inner.layout.indentLeftPt) : 0),
+              },
               children: runsToChildren(inner.runs),
             })
           );
@@ -128,8 +208,26 @@ export async function writeDocxFromBlocks(
   }
 
   const codeStyles = collectCodeStyles(blocks);
+  const defaultRun: Record<string, unknown> = {};
+  if (docLayout.font) defaultRun.font = docLayout.font;
+  if (docLayout.sizePt) defaultRun.size = Math.round(docLayout.sizePt * 2);
+  if (docLayout.color) defaultRun.color = docLayout.color;
+  const defaultParagraph: Record<string, unknown> = {};
+  if (docLayout.lineHeight != null) defaultParagraph.spacing = lineSpacing(docLayout.lineHeight);
+  const hasDefaults = Object.keys(defaultRun).length || Object.keys(defaultParagraph).length;
+
   const doc = new Document({
     styles: {
+      ...(hasDefaults
+        ? {
+            default: {
+              document: {
+                ...(Object.keys(defaultRun).length ? { run: defaultRun } : {}),
+                ...(Object.keys(defaultParagraph).length ? { paragraph: defaultParagraph } : {}),
+              },
+            },
+          }
+        : {}),
       // Cast: docx typings reject mixed style option shapes (code vs quote).
       paragraphStyles: [
         ...codeStyles.map((id) => ({
@@ -164,9 +262,36 @@ export async function writeDocxFromBlocks(
         },
       ],
     },
-    sections: [{ children: children.length ? children : [new Paragraph(' ')] }],
+    sections: [
+      {
+        ...sectionProperties(docLayout),
+        children: children.length ? children : [new Paragraph(' ')],
+      },
+    ],
   });
   return Packer.toBuffer(doc);
+}
+
+function sectionProperties(layout: DocumentLayout): Record<string, unknown> {
+  const p = layout.page;
+  if (!p) return {};
+  const page: Record<string, unknown> = {};
+  if (p.widthPt && p.heightPt) {
+    // docx swaps width/height itself when orientation is landscape.
+    const landscape = p.widthPt > p.heightPt;
+    page.size = {
+      width: twips(Math.min(p.widthPt, p.heightPt)),
+      height: twips(Math.max(p.widthPt, p.heightPt)),
+      ...(landscape ? { orientation: 'landscape' } : {}),
+    };
+  }
+  const margin: Record<string, number> = {};
+  if (p.marginTopPt != null) margin.top = twips(p.marginTopPt);
+  if (p.marginRightPt != null) margin.right = twips(p.marginRightPt);
+  if (p.marginBottomPt != null) margin.bottom = twips(p.marginBottomPt);
+  if (p.marginLeftPt != null) margin.left = twips(p.marginLeftPt);
+  if (Object.keys(margin).length) page.margin = margin;
+  return Object.keys(page).length ? { properties: { page } } : {};
 }
 
 function collectCodeStyles(blocks: CanonicalFlowBlock[]): string[] {

@@ -13,6 +13,14 @@ function stripTags(xml: string): string {
   return decodeXmlEntities(xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
 }
 
+/** Span text keeping `<text:line-break/>` as `\n` (written for `<br>` / DOCX `w:br`). */
+function spanText(xml: string): string {
+  return xml
+    .split(/<text:line-break\b[^>]*\/>|<text:line-break\b[^>]*>\s*<\/text:line-break>/)
+    .map(stripTags)
+    .join('\n');
+}
+
 function extractOdfCodeText(inner: string): string {
   return decodeXmlEntities(
     inner
@@ -74,7 +82,7 @@ function parseInlineOdf(text: string): CanonicalInline[] {
       const strike =
         /line-through/i.test(m[0]) || style === 'ADPS';
       const code = style === 'ADPCodeInline' || /Courier|Consolas|Mono/i.test(m[0]);
-      const t = stripTags(span);
+      const t = spanText(span);
       if (t) {
         runs.push({
           text: t,

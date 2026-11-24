@@ -185,12 +185,61 @@ export type InlineRun = {
   strike?: boolean;
   /** Inline code span. */
   code?: boolean;
+  underline?: boolean;
+  /** Font size in points (layout-aware writers: DOCX/ODT). */
+  sizePt?: number;
+  /** Font family name (first family of a CSS font-family list). */
+  font?: string;
+  /** Text color as RRGGBB hex (no leading #). */
+  color?: string;
+  /** Extra spacing between characters, in points. */
+  letterSpacingPt?: number;
+};
+
+export type TextAlign = 'left' | 'center' | 'right' | 'justify';
+
+/**
+ * Paragraph-level layout (points). Produced by `format: 'html'` writes from
+ * inline `style` / simple `<style>` rules; honoured by DOCX and ODT writers.
+ * Line breaks inside a paragraph are `\n` in run text (same as DOCX `w:br` on read).
+ */
+export type BlockLayout = {
+  align?: TextAlign;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
+  /** Line height as a multiple of the font size (1.5 = 150%). */
+  lineHeight?: number;
+  indentLeftPt?: number;
+  indentRightPt?: number;
+  firstLineIndentPt?: number;
+  pageBreakBefore?: boolean;
+};
+
+/** Document defaults for layout-aware flow writers (DOCX/ODT). */
+export type DocumentLayout = {
+  font?: string;
+  sizePt?: number;
+  color?: string;
+  lineHeight?: number;
+  page?: {
+    widthPt?: number;
+    heightPt?: number;
+    marginTopPt?: number;
+    marginRightPt?: number;
+    marginBottomPt?: number;
+    marginLeftPt?: number;
+  };
 };
 
 /** Shared structural model for convert → md/html. */
 export type ContentBlock =
-  | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; runs: InlineRun[] }
-  | { type: 'paragraph'; runs: InlineRun[] }
+  | {
+      type: 'heading';
+      level: 1 | 2 | 3 | 4 | 5 | 6;
+      runs: InlineRun[];
+      layout?: BlockLayout;
+    }
+  | { type: 'paragraph'; runs: InlineRun[]; layout?: BlockLayout }
   | { type: 'list_item'; level: number; ordered?: boolean; runs: InlineRun[] }
   | { type: 'table'; rows: string[][] }
   | { type: 'thematic_break' }
@@ -321,7 +370,7 @@ export type PptxThemeId = 'office' | 'ocean' | 'slate';
  */
 export type WriteDocumentInput =
   | { type: 'docx'; content: string | string[] }
-  | { type: 'docx'; blocks: ContentBlock[] }
+  | { type: 'docx'; blocks: ContentBlock[]; layout?: DocumentLayout }
   | { type: 'docx'; format: WriteMarkupFormat; content: string }
   | {
       type: 'xlsx' | 'xls';
@@ -333,7 +382,7 @@ export type WriteDocumentInput =
       title?: string;
     }
   | { type: 'odt'; content: string | string[] }
-  | { type: 'odt'; blocks: ContentBlock[] }
+  | { type: 'odt'; blocks: ContentBlock[]; layout?: DocumentLayout }
   | { type: 'odt'; format: WriteMarkupFormat; content: string }
   | { type: 'rtf'; content: string | string[] }
   | { type: 'rtf'; blocks: ContentBlock[] }

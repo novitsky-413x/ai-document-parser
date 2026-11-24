@@ -2,6 +2,7 @@ import path from 'node:path';
 import { DocumentError } from '../utils/errors.js';
 import type {
   ContentBlock,
+  DocumentLayout,
   DocumentWarning,
   WriteDocumentInput,
   WriteMode,
@@ -16,7 +17,7 @@ import { writePptxFromBlocks } from './pptx.js';
 import { emitRtfFromFlow } from '../parse/rtf.js';
 import { emitEpubFromFlow } from '../parse/epub.js';
 import { contentBlocksToFlow } from '../ir/projections.js';
-import { htmlToBlocks, markdownToBlocks } from '../parse/html-blocks.js';
+import { htmlToDocument, markdownToBlocks } from '../parse/html-blocks.js';
 import { ensureParentDir, writeFileAtomic } from '../utils/paths.js';
 
 type FlowWriteType = 'docx' | 'odt' | 'rtf' | 'epub' | 'pptx';
@@ -26,6 +27,10 @@ type ResolvedWrite = {
   mode: WriteMode;
   warnings: DocumentWarning[];
   paragraphCount?: number;
+  /** Document defaults / page (html mode, or `layout` with blocks). */
+  layout?: DocumentLayout;
+  /** Author asked for layout (CSS / align attrs, or layout props on blocks). */
+  styled?: boolean;
 };
 
 const PLAIN_MARKUP_HINT =
@@ -78,10 +83,12 @@ export function resolveFlowWriteInput(
   }
 
   if (hasBlocks) {
+    const layout = (input as { layout?: DocumentLayout }).layout;
     return {
       blocks: (input as { blocks: ContentBlock[] }).blocks,
       mode: 'blocks',
       warnings: [],
+      ...(layout ? { layout } : {}),
     };
   }
 
@@ -102,10 +109,13 @@ export function resolveFlowWriteInput(
       };
     }
     if (fmt === 'html') {
+      const doc = htmlToDocument(content);
       return {
-        blocks: htmlToBlocks(content),
+        blocks: doc.blocks,
         mode: 'html',
-        warnings: [],
+        warnings: [...doc.warnings],
+        layout: doc.layout,
+        styled: /\sstyle\s*=|<style\b|\salign\s*=|<center\b|<font\b/i.test(content),
       };
     }
     throw new DocumentError(
@@ -141,6 +151,29 @@ export function resolveFlowWriteInput(
     warnings,
     paragraphCount: paragraphs.length,
   };
+}
+
+function hasLayout(blocks: ContentBlock[], layout?: DocumentLayout): boolean {
+  if (layout && (layout.font || layout.color || layout.page || layout.lineHeight != null)) return true;
+  return blocks.some((b) => {
+    if (b.type === 'blockquote') return hasLayout(b.blocks);
+    if (b.type !== 'paragraph' && b.type !== 'heading' && b.type !== 'list_item') return false;
+    if (b.type !== 'list_item' && b.layout) return true;
+    return b.runs.some((r) => r.sizePt || r.font || r.color || r.letterSpacingPt);
+  });
+}
+
+/**
+ * Formats without a layout model still get the structure; say what was dropped
+ * (merged into a single HTML_STYLE_IGNORED warning).
+ */
+function noteLayoutUnsupported(resolved: ResolvedWrite, note: string): void {
+  const styled =
+    resolved.mode === 'html' ? resolved.styled : hasLayout(resolved.blocks, resolved.layout);
+  if (!styled) return;
+  const existing = resolved.warnings.find((w) => w.code === 'HTML_STYLE_IGNORED');
+  if (existing) existing.message = `${existing.message}; ${note}`;
+  else resolved.warnings.push({ code: 'HTML_STYLE_IGNORED', message: `HTML_STYLE_IGNORED: ${note}` });
 }
 
 function writeResult(
@@ -191,7 +224,7 @@ export async function writeDocument(
       return writeResult(filePath, result.message, resolved);
     }
     const flow = contentBlocksToFlow(resolved.blocks);
-    const buf = await writeDocxFromBlocks(flow);
+    const buf = await writeDocxFromBlocks(flow, { layout: resolved.layout });
     await ensureParentDir(filePath);
     await writeFileAtomic(filePath, buf);
     return writeResult(
@@ -249,16 +282,24 @@ export async function writeDocument(
     const flow = contentBlocksToFlow(resolved.blocks);
     await ensureParentDir(filePath);
     if (input.type === 'odt') {
-      await writeFileAtomic(filePath, await writeOdtFromBlocks(flow));
+      await writeFileAtomic(filePath, await writeOdtFromBlocks(flow, { layout: resolved.layout }));
       return writeResult(filePath, `Created ODT: ${filePath}`, resolved);
     }
     if (input.type === 'rtf') {
+      noteLayoutUnsupported(
+        resolved,
+        'RTF output keeps structure, bold/italic and line breaks; alignment, spacing, fonts, sizes and page setup are not applied (use DOCX or ODT)'
+      );
       await writeFileAtomic(filePath, emitRtfFromFlow(flow));
       return writeResult(filePath, `Created RTF: ${filePath}`, resolved);
     }
     if (input.type === 'pptx') {
       const theme =
         'theme' in input && input.theme ? input.theme : undefined;
+      noteLayoutUnsupported(
+        resolved,
+        'PPTX output keeps paragraph alignment and line breaks; fonts, sizes, spacing and page setup follow the slide theme'
+      );
       const pptxOut = await writePptxFromBlocks(flow, { theme });
       await writeFileAtomic(filePath, pptxOut.buffer);
       if (pptxOut.warnings.length) {
@@ -274,6 +315,10 @@ export async function writeDocument(
       'title' in input && typeof input.title === 'string'
         ? input.title
         : 'Document';
+    noteLayoutUnsupported(
+      resolved,
+      'EPUB output keeps structure and bold/italic; alignment, spacing, fonts and sizes are not applied'
+    );
     await writeFileAtomic(filePath, await emitEpubFromFlow(flow, title));
     return writeResult(filePath, `Created EPUB: ${filePath}`, resolved);
   }

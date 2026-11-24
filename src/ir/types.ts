@@ -1,4 +1,4 @@
-import type { ContentBlock, DocumentWarning, InlineRun } from '../types.js';
+import type { BlockLayout, ContentBlock, DocumentWarning, InlineRun } from '../types.js';
 
 /** Rich inline span in canonical flow documents. */
 export type CanonicalInline = InlineRun & {
@@ -9,8 +9,13 @@ export type CanonicalInline = InlineRun & {
 };
 
 export type CanonicalFlowBlock =
-  | { type: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; runs: CanonicalInline[] }
-  | { type: 'paragraph'; runs: CanonicalInline[] }
+  | {
+      type: 'heading';
+      level: 1 | 2 | 3 | 4 | 5 | 6;
+      runs: CanonicalInline[];
+      layout?: BlockLayout;
+    }
+  | { type: 'paragraph'; runs: CanonicalInline[]; layout?: BlockLayout }
   | { type: 'list'; ordered?: boolean; items: CanonicalFlowBlock[][] }
   | { type: 'table'; headerRows?: number; rows: CanonicalTableCell[][] }
   | { type: 'blockquote'; blocks: CanonicalFlowBlock[] }
