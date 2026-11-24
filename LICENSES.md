@@ -13,6 +13,7 @@ This package is licensed under the **MIT License** (see [LICENSE](LICENSE)).
 | Package | License | Role |
 |---------|---------|------|
 | `pdfjs-dist` | Apache-2.0 | PDF text extraction |
+| `@hyzyla/pdfium` | MIT (bundled PDFium WebAssembly: BSD-3-Clause / Apache-2.0) | Render scanned PDF pages for OCR |
 | `jszip` | MIT OR GPL-3.0-or-later (used as MIT) | OOXML ZIP: DOCX surgical edit, PPTX parse, ZIP format refine |
 | `docx` | MIT | Create DOCX from scratch |
 | `jspdf` | MIT | Plain-text PDF write |

@@ -15,6 +15,11 @@ import type {
 } from '../types.js';
 import type { PdfWord } from './pdf-structure.js';
 import {
+  openPdfiumRasterizer,
+  type PdfPageRasterizer,
+  type PdfRasterizerFactory,
+} from './pdf-raster.js';
+import {
   DEFAULT_PDFTOPPM_TIMEOUT_MS,
   languageFlag,
   normalizeOcrOptions,
@@ -46,6 +51,8 @@ export interface OcrPagesResult {
 
 /** Test / host seam for spawning Tesseract and pdftoppm. */
 export interface OcrEngineHooks {
+  /** Opens a PDF with the primary (PDFium) rasterizer. `null` simulates PDFium being unavailable. */
+  openPdfRasterizer?: PdfRasterizerFactory | null;
   run?: OcrCommandRunner;
   existsSync?: (filePath: string) => boolean;
   resolveRuntime?: (input?: ResolveOcrRuntimeOptions) => OcrRuntime;
@@ -230,11 +237,56 @@ export async function ocrPdfPages(
     });
   }
 
+  const mode = options.pdfRasterizer;
+  let pdfium: PdfPageRasterizer | undefined;
+  let pdfiumError: string | undefined;
+  if (mode !== 'pdftoppm') {
+    const open = hooks.openPdfRasterizer === undefined ? openPdfiumRasterizer : hooks.openPdfRasterizer;
+    try {
+      if (!open) throw new Error('PDFium rasterizer is not available');
+      pdfium = await open(pdfPath);
+    } catch (err) {
+      pdfiumError = errorMessage(err).slice(0, 300);
+      if (mode === 'pdfium') {
+        warnings.push({
+          code: 'PDF_OCR_UNAVAILABLE',
+          message: 'PDFium (WebAssembly) could not open the PDF for OCR: ' + pdfiumError,
+        });
+        return { words, warnings, usedPages };
+      }
+    }
+  }
+  let fallbackNoted = false;
+  const noteFallback = () => {
+    if (fallbackNoted || !pdfiumError) return;
+    fallbackNoted = true;
+    warnings.push({
+      code: 'PDF_OCR_RASTER_FALLBACK',
+      message: 'PDFium could not render pages (' + pdfiumError + '); pdftoppm was used instead.',
+    });
+  };
+  const viaPdftoppm = async (page: number): Promise<string> => {
+    const img = await rasterizePdfPage(pdfPath, page, tmp, options, runtime, hooks);
+    noteFallback();
+    return img;
+  };
+
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'adp-ocr-'));
   try {
     for (const page of todo) {
       try {
-        const img = await rasterizePdfPage(pdfPath, page, tmp, options, runtime, hooks);
+        let img: string;
+        if (pdfium) {
+          try {
+            img = await pdfium.renderPage(page, options.dpi, path.join(tmp, 'page-' + page + '.png'));
+          } catch (err) {
+            if (mode === 'pdfium') throw err;
+            pdfiumError = 'page ' + page + ': ' + errorMessage(err).slice(0, 300);
+            img = await viaPdftoppm(page);
+          }
+        } else {
+          img = await viaPdftoppm(page);
+        }
         const recognized = await provider.recognize({
           imagePath: img,
           page,
@@ -258,7 +310,9 @@ export async function ocrPdfPages(
           warnings.push({
             code: 'PDF_OCR_UNAVAILABLE',
             message: missingPoppler
-              ? 'pdftoppm was not found (Poppler). Scanned-PDF OCR needs it; Poppler is not bundled. Image OCR works with Tesseract alone. Set popplerBin, ADP_PDFTOPPM, or install poppler-utils.'
+              ? 'pdftoppm was not found (Poppler) and PDFium could not render the page' +
+                (pdfiumError ? ' (' + pdfiumError + ')' : '') +
+                '. Scanned-PDF OCR uses the bundled PDFium (WebAssembly) first and pdftoppm as a fallback. Set popplerBin, ADP_PDFTOPPM, or install poppler-utils.'
               : 'OCR is unavailable: no bundled resources/ocr (run `node scripts/fetch-ocr-runtime.mjs`) and no tesseract on PATH. Set bin / ADP_TESSERACT to use a custom binary.',
           });
           // A missing runtime cannot recover on later pages.
@@ -272,6 +326,7 @@ export async function ocrPdfPages(
       }
     }
   } finally {
+    pdfium?.close();
     await rm(tmp, { recursive: true, force: true });
   }
   return { words, warnings, usedPages };

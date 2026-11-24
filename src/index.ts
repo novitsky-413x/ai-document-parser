@@ -49,6 +49,7 @@ export type {
   OcrRuntime,
   OcrRuntimeSource,
   OcrProvider,
+  OcrPdfRasterizer,
   OcrRecognizeRequest,
   OcrRecognizeResult,
   OcrWord,

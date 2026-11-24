@@ -62,6 +62,8 @@ export interface OcrProvider {
   recognize(request: OcrRecognizeRequest): Promise<OcrRecognizeResult>;
 }
 
+export type OcrPdfRasterizer = 'auto' | 'pdfium' | 'pdftoppm';
+
 export interface OcrOptions {
   /**
    * `'auto'` (default): OCR raster images and PDF pages that have no usable text layer.
@@ -77,6 +79,13 @@ export interface OcrOptions {
   tessdataDir?: string;
   /** Path to `pdftoppm` (Poppler). Overrides `ADP_PDFTOPPM`. */
   popplerBin?: string;
+  /**
+   * How scanned PDF pages are rendered to images for OCR.
+   * `'auto'` (default): PDFium (WebAssembly, bundled with the package), falling back
+   * to `pdftoppm` if PDFium cannot load or render a page.
+   * `'pdfium'`: PDFium only. `'pdftoppm'`: Poppler only (previous behavior).
+   */
+  pdfRasterizer?: OcrPdfRasterizer;
   /** Tesseract page segmentation mode. Default 6. */
   psm?: number;
   /** Tesseract OCR engine mode. */

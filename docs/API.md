@@ -25,6 +25,7 @@ type OcrOptions = {
   bin?: string;
   tessdataDir?: string;
   popplerBin?: string;
+  pdfRasterizer?: 'auto' | 'pdfium' | 'pdftoppm'; // default 'auto': PDFium (WASM), then pdftoppm
   psm?: number;
   oem?: number;
   dpi?: number;
@@ -34,7 +35,7 @@ type OcrOptions = {
 };
 ```
 
-`resolveOcrRuntime({ languages, bin, tessdataDir, popplerBin })` is exported from the package root. Resolution order: explicit options → `ADP_TESSERACT` / `ADP_TESSDATA` / `TESSDATA_PREFIX` / `ADP_PDFTOPPM` → bundled `resources/ocr` (valid when the binary and every requested `*.traineddata` exist) → `tesseract` on PATH. `pdftoppm` is also looked up next to the runtime. Missing languages yield `OCR_LANG_MISSING` and OCR is skipped; any text layer is kept. See the README OCR section.
+`resolveOcrRuntime({ languages, bin, tessdataDir, popplerBin })` is exported from the package root. Resolution order: explicit options → `ADP_TESSERACT` / `ADP_TESSDATA` / `TESSDATA_PREFIX` / `ADP_PDFTOPPM` → bundled `resources/ocr` (valid when the binary and every requested `*.traineddata` exist) → `tesseract` on PATH. Scanned PDF pages are rendered with the bundled PDFium WebAssembly build (`@hyzyla/pdfium`); `pdftoppm` (looked up the same way and next to the runtime) is only a fallback, reported with `PDF_OCR_RASTER_FALLBACK`. `ADP_PDFIUM_WASM` overrides the `pdfium.wasm` path. Missing languages yield `OCR_LANG_MISSING` and OCR is skipped; any text layer is kept. See the README OCR section.
 
 Returns `DocumentResult` with `format`, `text`, `charCount`, optional `structured` / `ast` / `chunks` / `warnings`.
 

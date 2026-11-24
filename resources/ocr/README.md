@@ -5,7 +5,7 @@
 ```
 bin/tesseract(.exe)
 tessdata/<lang>.traineddata
-bin/pdftoppm(.exe)   (optional, used for scanned PDFs)
+bin/pdftoppm(.exe)   (optional fallback renderer for scanned PDFs)
 lib/                 (optional; LD_LIBRARY_PATH / DYLD_LIBRARY_PATH / PATH)
 ```
 
@@ -28,6 +28,6 @@ Resolution order used by `resolveOcrRuntime()`:
 3. this bundled folder
 4. `tesseract` and `pdftoppm` on PATH
 
-If the runtime is missing, the parser reports `PDF_OCR_UNAVAILABLE` / `IMAGE_OCR_UNAVAILABLE` and still returns any text layer that pdf.js already extracted. Scanned-PDF OCR needs `pdftoppm` (Poppler). Poppler is GPL, so it is not downloaded unless you pass `--poppler-url` (and `--poppler-sha256`) explicitly. Image OCR works with Tesseract alone.
+If the runtime is missing, the parser reports `PDF_OCR_UNAVAILABLE` / `IMAGE_OCR_UNAVAILABLE` and still returns any text layer that pdf.js already extracted. Scanned-PDF pages are rendered with PDFium compiled to WebAssembly (`@hyzyla/pdfium`, an npm dependency; no native binary), so scanned PDFs and images both need only Tesseract. `pdftoppm` (Poppler) is an optional fallback used when PDFium cannot load or render a page; Poppler is GPL, so it is not downloaded unless you pass `--poppler-url` (and `--poppler-sha256`) explicitly.
 
 Callers can also pass a custom `OcrProvider` and skip the CLI runtime entirely.

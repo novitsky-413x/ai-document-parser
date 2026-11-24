@@ -40,7 +40,7 @@ await editDocument(path, {
 
 ## OCR
 
-Scanned PDFs and raster images are OCR'd automatically when Tesseract is bundled or on PATH (default languages `rus`+`eng`). Pass `ocr: false` to skip, `{ enabled: true }` to OCR every PDF page, or `{ languages: ['deu', 'eng'], tessdataDir }` for other languages. A custom `provider` can replace the Tesseract CLI. Check `warnings` for `OCR_LANG_MISSING`, `PDF_OCR_UNAVAILABLE`, or `IMAGE_OCR_USED`. The parser does not ship the engine — see the README OCR section and `scripts/fetch-ocr-runtime.mjs`.
+Scanned PDFs and raster images are OCR'd automatically when Tesseract is bundled or on PATH (default languages `rus`+`eng`). Pass `ocr: false` to skip, `{ enabled: true }` to OCR every PDF page, or `{ languages: ['deu', 'eng'], tessdataDir }` for other languages. A custom `provider` can replace the Tesseract CLI. Check `warnings` for `OCR_LANG_MISSING`, `PDF_OCR_UNAVAILABLE`, or `IMAGE_OCR_USED`. Scanned PDF pages are rendered with bundled PDFium (WebAssembly), so only Tesseract is needed; `pdftoppm` is an optional fallback. The parser does not ship the Tesseract engine — see the README OCR section and `scripts/fetch-ocr-runtime.mjs`.
 
 ## Spreadsheets
 

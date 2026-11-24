@@ -1,4 +1,4 @@
-import type { OcrOptions, OcrProvider } from '../types.js';
+import type { OcrOptions, OcrPdfRasterizer, OcrProvider } from '../types.js';
 
 export const DEFAULT_OCR_LANGUAGES: readonly string[] = ['rus', 'eng'];
 export const DEFAULT_OCR_PSM = 6;
@@ -15,6 +15,7 @@ export interface ResolvedOcrOptions {
   bin?: string;
   tessdataDir?: string;
   popplerBin?: string;
+  pdfRasterizer: OcrPdfRasterizer;
   psm: number;
   oem?: number;
   dpi: number;
@@ -66,6 +67,7 @@ function baseResolved(
     bin: partial.bin,
     tessdataDir: partial.tessdataDir,
     popplerBin: partial.popplerBin,
+    pdfRasterizer: partial.pdfRasterizer ?? 'auto',
     psm: partial.psm ?? DEFAULT_OCR_PSM,
     oem: partial.oem,
     dpi: partial.dpi ?? DEFAULT_OCR_DPI,
@@ -93,6 +95,8 @@ export function normalizeOcrOptions(ocr?: boolean | OcrOptions): ResolvedOcrOpti
     bin: emptyToUndef(ocr.bin),
     tessdataDir: emptyToUndef(ocr.tessdataDir),
     popplerBin: emptyToUndef(ocr.popplerBin),
+    pdfRasterizer:
+      ocr.pdfRasterizer === 'pdfium' || ocr.pdfRasterizer === 'pdftoppm' ? ocr.pdfRasterizer : 'auto',
     psm: ocr.psm == null ? DEFAULT_OCR_PSM : finiteInt(ocr.psm, DEFAULT_OCR_PSM, 0, 13),
     oem: ocr.oem == null ? undefined : finiteInt(ocr.oem, 3, 0, 3),
     dpi: ocr.dpi == null ? DEFAULT_OCR_DPI : finiteInt(ocr.dpi, DEFAULT_OCR_DPI, 1, 2400),

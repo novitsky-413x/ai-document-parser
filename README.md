@@ -112,12 +112,14 @@ Notes:
 - Raster images (`png`, `jpg`, `tiff`, `gif`, `webp`, `bmp`) are always OCR'd unless you pass `ocr: false`.
 - PDF pages are read with pdf.js first. Pages with almost no text (scans) are OCR'd automatically (`enabled: 'auto'`). Pass `{ enabled: true }` to OCR every page, or `ocr: false` to skip OCR.
 
+Scanned PDF pages are rendered to images with **PDFium compiled to WebAssembly** ([`@hyzyla/pdfium`](https://www.npmjs.com/package/@hyzyla/pdfium), MIT; PDFium itself is BSD-3-Clause/Apache-2.0). It ships inside the npm dependency tree (`pdfium.wasm`, ~5 MB), needs no native binary, and works the same on Windows, macOS, and Linux, so scanned-PDF OCR needs only Tesseract. `pdftoppm` (Poppler) is an optional fallback: it is used when PDFium cannot load or render a page (warning `PDF_OCR_RASTER_FALLBACK`). Set `ocr.pdfRasterizer` to `'pdfium'` or `'pdftoppm'` to force one renderer (default `'auto'`). `ADP_PDFIUM_WASM` overrides the path to `pdfium.wasm`.
+
 The npm package does **not** ship the Tesseract binary or language data. Provide a runtime in one of these ways (first match wins):
 
 1. Explicit options: `{ bin, tessdataDir, popplerBin }`
 2. Environment: `ADP_TESSERACT`, `ADP_TESSDATA` or `TESSDATA_PREFIX`, `ADP_PDFTOPPM`
 3. A bundled folder at `resources/ocr` (Electron hosts can pack this as `extraResources` so `process.resourcesPath/ocr` resolves)
-4. `tesseract` (and for scanned PDFs, `pdftoppm`) on `PATH`
+4. `tesseract` (and, only as the optional scanned-PDF fallback, `pdftoppm`) on `PATH`
 
 Bundled layout:
 
@@ -125,7 +127,7 @@ Bundled layout:
 resources/ocr/bin/tesseract(.exe)
 resources/ocr/tessdata/eng.traineddata
 resources/ocr/tessdata/<lang>.traineddata
-resources/ocr/bin/pdftoppm(.exe)   (optional)
+resources/ocr/bin/pdftoppm(.exe)   (optional fallback renderer)
 resources/ocr/lib/                 (optional)
 ```
 
@@ -137,7 +139,7 @@ node scripts/fetch-ocr-runtime.mjs --langs rus,eng
 node scripts/fetch-ocr-runtime.mjs --langs deu,eng --set best
 ```
 
-`--set` may be `fast` (default), `best`, or `standard`. Any Tesseract language id works — URLs are built from the official GitHub tessdata templates. `--bin download --bin-url` accepts a raw binary or an archive (zip, tar.*, 7z, NSIS, 7-Zip SFX); pass `--bin-sha256` to verify the download. Scanned-PDF OCR also needs Poppler (`pdftoppm`). Poppler is GPL, so the script does not download it unless you pass `--poppler-url`. Image OCR works with Tesseract alone.
+`--set` may be `fast` (default), `best`, or `standard`. Any Tesseract language id works — URLs are built from the official GitHub tessdata templates. `--bin download --bin-url` accepts a raw binary or an archive (zip, tar.*, 7z, NSIS, 7-Zip SFX); pass `--bin-sha256` to verify the download. Scanned-PDF OCR does not need Poppler: pages are rendered with the bundled PDFium (WebAssembly). Poppler (`pdftoppm`) is GPL, so the script does not download it unless you pass `--poppler-url`; it is only a fallback renderer.
 
 ```ts
 import { parseDocument, convertDocument, resolveOcrRuntime } from 'ai-document-parser';
